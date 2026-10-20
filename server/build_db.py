@@ -704,7 +704,7 @@ def apply_igdb(game_rows, igdb_games):
         if g["critic"] is not None:
             set_info(target, "Critic score (IGDB)", f"{g['critic']}/100 from {g['critic_count']} reviews")
             # Metacritic stays the headline score when we have it; otherwise use the critic average.
-            if target.get("metascore") is None:
+            if target.get("metascore") is None and g["critic_count"] >= CONFIG.get("igdb_min_reviews", 3):
                 target["metascore"] = g["critic"]
                 set_info(target, "_critic", "Critics (IGDB)")
     log(f"IGDB: {matched} games matched, {len(out)} added")

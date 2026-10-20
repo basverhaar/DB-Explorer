@@ -12,5 +12,6 @@
     "Nintendo Switch": 20,
     "PlayStation 4": 10,
     "Xbox One": 10
-  }
+  },
+  "igdb_min_reviews": 3
 }
