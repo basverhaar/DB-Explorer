@@ -346,7 +346,8 @@ SCORE_QUERY = """
 SELECT ?item ?label ?score ?critic ?mcid ?imdb WHERE {
   ?item p:P444 ?st .
   ?st ps:P444 ?score ; pq:P447 ?c .
-  ?c rdfs:label ?critic . FILTER(LANG(?critic) = "en" && ?critic IN ("Metacritic", "OpenCritic", "Rotten Tomatoes"))
+  ?c rdfs:label ?cl . FILTER(LANG(?cl) = "en" && STR(?cl) IN ("Metacritic", "OpenCritic", "Rotten Tomatoes"))
+  BIND(STR(?cl) AS ?critic)
   ?item wdt:P31 wd:%s .
   OPTIONAL { ?item rdfs:label ?label . FILTER(LANG(?label) = "en") }
   OPTIONAL { ?item wdt:P1712 ?mcid }
@@ -368,6 +369,9 @@ def parse_score(text, critic):
     return None
 
 
+CURRENT_CONSOLES = {"Nintendo Switch 2", "PlayStation 5", "Xbox Series S/X", "Nintendo Switch"}
+
+
 def collect_scores(rows):
     """Groups SPARQL rows by item: best score per critic plus the Metacritic page id."""
     items = {}
@@ -382,6 +386,11 @@ def collect_scores(rows):
                 it["scores"][r["critic"]] = v
         if r.get("mcid"):
             it["mcid"] = r["mcid"]
+    per_critic = {}
+    for v in items.values():
+        for c in v["scores"]:
+            per_critic[c] = per_critic.get(c, 0) + 1
+    log(f"Wikidata: {len(rows)} score rows, usable per critic: {per_critic}")
     return {k: v for k, v in items.items() if v["scores"]}
 
 
@@ -397,7 +406,7 @@ SELECT ?item ?label ?platform (MIN(?date) AS ?released) WHERE {
   ?p rdfs:label ?platform . FILTER(LANG(?platform) = "en")
   OPTIONAL { ?item wdt:P577 ?date }
   OPTIONAL { ?item rdfs:label ?label . FILTER(LANG(?label) = "en") }
-  { ?item p:P444/pq:P447 ?c . ?c rdfs:label ?cl . FILTER(LANG(?cl) = "en" && ?cl IN ("Metacritic", "OpenCritic")) }
+  { ?item p:P444/pq:P447 ?c . ?c rdfs:label ?cl . FILTER(LANG(?cl) = "en" && STR(?cl) IN ("Metacritic", "OpenCritic")) }
   UNION
   { ?item wdt:P577 ?d . FILTER(?d >= "%s"^^xsd:dateTime) }
 } GROUP BY ?item ?label ?platform""" % since)
@@ -409,8 +418,9 @@ SELECT ?item ?label ?platform (MIN(?date) AS ?released) WHERE {
         y = year_of(r.get("released"))
         if y and (not g.get("year") or y < g["year"]):
             g["year"] = y
-    # Keep scored games plus recent console games; drop unlabeled items.
-    games = {k: g for k, g in games.items() if g.get("label") and (g["scores"] or g.get("platforms"))}
+    # Keep scored games plus recent games on current consoles; drop unlabeled items.
+    games = {k: g for k, g in games.items()
+             if g.get("label") and (g["scores"] or g.get("platforms", set()) & CURRENT_CONSOLES)}
     log(f"Wikidata: {len(games)} games after adding platforms/release dates")
     return games
 
