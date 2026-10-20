@@ -166,6 +166,27 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
+            Text("App", style = MaterialTheme.typography.titleLarge)
+            val updater = app().updater
+            var updateMessage by remember { mutableStateOf<String?>(null) }
+            Text("Version ${updater.installedName} (build ${updater.installedVersion})")
+            Text(
+                "The app checks for a new version when it starts and with every background data check.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(onClick = {
+                updateMessage = "Checking…"
+                scope.launch {
+                    updater.dismissedVersion = 0
+                    updateMessage = runCatching { updater.check() }.fold(
+                        onSuccess = { if (it == null) "You have the latest version." else null },
+                        onFailure = { "Could not check: ${it.message}" },
+                    )
+                }
+            }) { Text("Check for app update") }
+            updateMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+
             Text("Advanced", style = MaterialTheme.typography.titleLarge)
             RepoField(s.repo) { v -> save { it.copy(repo = v) } }
             TextButton(onClick = { uri.openUri("https://github.com/${s.repo}/actions/workflows/database.yml") }) {

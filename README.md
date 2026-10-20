@@ -8,7 +8,7 @@ An Android app for browsing **movies, TV shows and games** in one place, with fa
 2. Open the file. If Android asks, allow your browser or file manager to "install unknown apps".
 3. Launch **DB Explorer**. It downloads the latest database straight away.
 
-Every push to this repository builds a new APK through GitHub Actions. New builds install over the old one and keep your data.
+Every push to this repository builds a new APK through GitHub Actions. From then on **the app updates itself**. It checks for a new version when it starts and during its background data checks. When one is out, it shows an **Update available** dialog (and a notification if the app is closed). Tap **Update** to download and install it in place; your played marks and settings are kept. The first time, Android asks you to allow DB Explorer to install apps.
 
 ## How it works
 

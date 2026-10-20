@@ -4,6 +4,7 @@ import android.app.Application
 import com.dbexplorer.data.AppDatabase
 import com.dbexplorer.data.Repository
 import com.dbexplorer.data.SettingsStore
+import com.dbexplorer.sync.AppUpdater
 import com.dbexplorer.sync.RefreshScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -13,11 +14,14 @@ import kotlinx.coroutines.launch
 class DbExplorerApp : Application() {
     lateinit var repository: Repository
         private set
+    lateinit var updater: AppUpdater
+        private set
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
         super.onCreate()
         repository = Repository(AppDatabase.create(this), SettingsStore(this))
+        updater = AppUpdater(this, repository.settings)
         appScope.launch {
             val s = repository.settings.current()
             RefreshScheduler.schedulePeriodic(this@DbExplorerApp, s.wifiOnly)

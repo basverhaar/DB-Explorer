@@ -20,6 +20,8 @@ class RefreshWorker(context: Context, params: WorkerParameters) : CoroutineWorke
     override suspend fun doWork(): Result {
         val repo = app.repository
         val force = inputData.getBoolean(KEY_FORCE, false)
+        // Piggy-back the app update check on the regular background check.
+        app.updater.checkAndNotify()
         return try {
             val message = CatalogueSync(applicationContext, repo).sync(force, ::progress)
             repo.settings.recordCheck(true, message)

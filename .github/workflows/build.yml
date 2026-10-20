@@ -40,12 +40,24 @@ jobs:
           name: DB-Explorer-apk
           path: DB-Explorer.apk
 
+      # The app reads version.json to offer in-app updates; versionCode matches the APK's.
+      - name: Write version.json
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          notes = subprocess.run(["git", "log", "-1", "--pretty=%s"], capture_output=True, text=True).stdout.strip()
+          run = int(os.environ["GITHUB_RUN_NUMBER"])
+          json.dump({"versionCode": run, "versionName": f"1.0.{run}", "notes": notes,
+                     "apk": "DB-Explorer.apk"}, open("version.json", "w"))
+          PY
+          cat version.json
+
       - name: Publish "latest" release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete latest --cleanup-tag --yes || true
-          gh release create latest DB-Explorer.apk \
+          gh release create latest DB-Explorer.apk version.json \
             --target "$GITHUB_SHA" \
             --title "DB Explorer (latest build)" \
             --notes "Built from ${GITHUB_REF_NAME} @ ${GITHUB_SHA::7}. Download DB-Explorer.apk on your phone and open it to install."

@@ -32,6 +32,7 @@ fun app(): DbExplorerApp = LocalContext.current.applicationContext as DbExplorer
 @Composable
 fun AppRoot() {
     val nav = rememberNavController()
+    UpdatePrompt()
     NavHost(nav, startDestination = "home") {
         composable("home") {
             HomeScreen(
