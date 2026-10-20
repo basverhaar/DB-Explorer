@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Database cylinder with a play triangle, centred in the 72dp adaptive-icon safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,30c-12.7,0 -23,4 -23,9v30c0,5 10.3,9 23,9s23,-4 23,-9V39c0,-5 -10.3,-9 -23,-9zM54,34c11,0 19,3.2 19,5s-8,5 -19,5s-19,-3.2 -19,-5s8,-5 19,-5z" />
+    <path
+        android:fillColor="#FFF5B82E"
+        android:pathData="M48,50l14,8l-14,8z" />
+</vector>
