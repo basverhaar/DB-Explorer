@@ -197,7 +197,7 @@ def fetch_steam(min_reviews):
 
 # ---------------------------------------------------------------- RAWG
 
-def fetch_rawg(popular_pages, top_pages):
+def fetch_rawg(popular_pages, top_pages, platform_pages=None):
     games = {}
 
     def pages(ordering, count, extra=""):
@@ -221,6 +221,10 @@ def fetch_rawg(popular_pages, top_pages):
 
     pages("-added", popular_pages)
     pages("-metacritic", top_pages, "&metacritic=1,100")
+    # Popular games per current console, so e.g. PS5 and Switch are well covered.
+    for platform_id, count in (platform_pages or {}).items():
+        if platform_id.isdigit():
+            pages("-added", count, f"&platforms={platform_id}")
     if not games:
         raise RuntimeError("RAWG returned no games")
     return list(games.values())
@@ -351,7 +355,8 @@ def main():
     imdb = run("IMDb", lambda: fetch_imdb(CONFIG["imdb_min_votes"]), lambda: previous("IMDB"))
     steam = run("Steam", lambda: fetch_steam(CONFIG["steam_min_reviews"]), lambda: None)
     if RAWG_KEY:
-        rawg_games = run("RAWG", lambda: fetch_rawg(CONFIG["rawg_popular_pages"], CONFIG["rawg_top_pages"]),
+        rawg_games = run("RAWG", lambda: fetch_rawg(CONFIG["rawg_popular_pages"], CONFIG["rawg_top_pages"],
+                                                 CONFIG.get("rawg_platform_pages")),
                          lambda: None)
     else:
         rawg_games = None
