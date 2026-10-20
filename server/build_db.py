@@ -426,11 +426,34 @@ SELECT ?item ?label ?platform (MIN(?date) AS ?released) WHERE {
     return games
 
 
+FILM_QUERY = """
+SELECT ?item ?score ?imdb ?mcid WHERE {
+  ?item p:P444 ?st .
+  ?st pq:P447 wd:%s ; ps:P444 ?score .
+  ?item wdt:P345 ?imdb .
+  OPTIONAL { ?item wdt:P1712 ?mcid }
+}"""
+
+
+# Wikidata items for the review sites (used as the "review score by" qualifier).
+FILM_CRITICS = {"Metacritic": "Q150248", "Rotten Tomatoes": "Q105584"}
+
+
 def fetch_wikidata_films():
-    films = collect_scores(sparql(SCORE_QUERY % ("Q11424", "?item wdt:P345 ?imdb .")))
-    series = collect_scores(sparql(SCORE_QUERY % ("Q5398426", "?item wdt:P345 ?imdb .")))
-    films.update(series)
-    by_imdb = {f["imdb"]: f for f in films.values() if f.get("imdb")}
+    """Metacritic and Rotten Tomatoes scores for movies/series, matched by IMDb id.
+    One light query per review site keeps each request under the endpoint's time limit."""
+    by_imdb = {}
+    for critic, item in FILM_CRITICS.items():
+        rows = sparql(FILM_QUERY % item)
+        for r in rows:
+            r["critic"] = critic
+        for k, v in collect_scores(rows).items():
+            f = by_imdb.setdefault(v["imdb"], {"scores": {}, "mcid": None, "imdb": v["imdb"]})
+            f["scores"].update(v["scores"])
+            f["mcid"] = f["mcid"] or v["mcid"]
+        time.sleep(5)
+    if not by_imdb:
+        raise RuntimeError("Wikidata returned no film scores")
     log(f"Wikidata: {len(by_imdb)} movies/series with review scores")
     return by_imdb
 
