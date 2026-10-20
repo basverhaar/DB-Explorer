@@ -10,6 +10,11 @@ on:
 permissions:
   contents: write
 
+# A newer push supersedes an older build, so releases are never published out of order.
+concurrency:
+  group: apk
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest

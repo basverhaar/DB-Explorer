@@ -197,6 +197,11 @@ fun BrowseScreen(type: MediaType, onOpen: (String) -> Unit) {
                     TextButton(onClick = { vm.update { Filters(type) } }) { Text("Clear search & filters") }
                 }
             }
+            // Coming back from a detail screen the paged data reattaches a frame later. Showing an
+            // empty list meanwhile would clamp the saved scroll position to the top, so wait for rows.
+            items.itemCount == 0 -> Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.TopCenter) {
+                CircularProgressIndicator()
+            }
             else -> LazyColumn(
                 state = listState,
                 contentPadding = PaddingValues(12.dp),
