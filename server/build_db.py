@@ -147,6 +147,9 @@ def to_int(v):
         return 0
 
 
+STEAM_TAG_GENRES = ["Open World"]
+
+
 def fetch_steam(min_reviews):
     apps = {}
 
@@ -175,6 +178,14 @@ def fetch_steam(min_reviews):
             read("https://steamspy.com/api.php?request=genre&genre=" + urllib.parse.quote(g), g)
         except Exception as e:  # one genre failing should not lose the rest
             log(f"Steam: {g} failed: {e}")
+    # Steam tags that work as genres in the app (SteamSpy lists every game with the tag).
+    for tag in STEAM_TAG_GENRES:
+        time.sleep(1.2)
+        log(f"Steam tag: {tag}")
+        try:
+            read("https://steamspy.com/api.php?request=tag&tag=" + urllib.parse.quote(tag), tag)
+        except Exception as e:
+            log(f"Steam tag {tag} failed: {e}")
     if len(apps) < 100:
         raise RuntimeError(f"SteamSpy returned only {len(apps)} games")
     rows = []
@@ -257,7 +268,10 @@ def rawg_platforms(g):
 
 
 def rawg_genres(g):
-    return ["MMO" if x["name"] == "Massively Multiplayer" else x["name"] for x in g.get("genres") or []]
+    genres = ["MMO" if x["name"] == "Massively Multiplayer" else x["name"] for x in g.get("genres") or []]
+    if any(t.get("slug") == "open-world" for t in g.get("tags") or []):
+        genres.append("Open World")
+    return genres
 
 
 def merge_rawg(games, steam_rows):
@@ -574,7 +588,7 @@ IGDB_PLATFORMS = {
 }
 
 IGDB_FIELDS = ("fields name,slug,url,first_release_date,aggregated_rating,aggregated_rating_count,"
-               "rating,rating_count,total_rating_count,hypes,summary,platforms.name,genres.name,"
+               "rating,rating_count,total_rating_count,hypes,summary,platforms.name,genres.name,themes.name,"
                "cover.image_id,involved_companies.company.name,involved_companies.developer,"
                "involved_companies.publisher;")
 
@@ -652,7 +666,8 @@ def igdb_row(g):
         "title": g["name"].strip(),
         "year": time.gmtime(ts).tm_year if ts else None,
         "platforms": [IGDB_PLATFORMS[p["name"]] for p in g.get("platforms") or [] if p.get("name") in IGDB_PLATFORMS],
-        "genres": [x["name"] for x in g.get("genres") or [] if x.get("name")],
+        "genres": [x["name"] for x in g.get("genres") or [] if x.get("name")] +
+                  ["Open World" for t in g.get("themes") or [] if (t.get("name") or "").lower() == "open world"],
         "critic": round(g["aggregated_rating"]) if g.get("aggregated_rating") else None,
         "critic_count": g.get("aggregated_rating_count") or 0,
         "user": round(g["rating"] / 10, 2) if g.get("rating") else None,

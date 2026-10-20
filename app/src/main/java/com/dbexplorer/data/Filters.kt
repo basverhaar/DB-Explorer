@@ -96,6 +96,12 @@ object QueryBuilder {
         return SimpleSQLiteQuery("SELECT t.*, (p.id IS NOT NULL) AS played $FROM $w ORDER BY $order", args)
     }
 
+    /** Genre and platform fields of every matching title, for live per-option counts. */
+    fun facetFields(f: Filters): SimpleSQLiteQuery {
+        val (w, args) = where(f)
+        return SimpleSQLiteQuery("SELECT t.genres, t.platforms $FROM $w", args)
+    }
+
     fun count(f: Filters): SimpleSQLiteQuery {
         val (w, args) = where(f)
         return SimpleSQLiteQuery("SELECT COUNT(*) $FROM $w", args)

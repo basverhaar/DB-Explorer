@@ -44,11 +44,14 @@ Optional: add an `OMDB_KEY` secret (free from [omdbapi.com](https://www.omdbapi.
 ## Features
 
 - **Three tabs:** Movies, TV Shows and Games. You can search by title, and every word you type must appear in it.
-- All filters sit behind the **Filters** button, so the list stays clean. The list loads 30 rows at a time as you scroll.
+- All filters sit behind the **Filters** button, so the list stays clean.
+  - **Show results** and **Reset filters** stay pinned at the bottom of the filter screen. The button shows the live number of results.
+  - Next to each genre and platform is the number of results you'd get by picking it. Options that would give nothing are greyed out. Long lists are collapsed behind **Show all**.
+- The list loads 30 rows at a time as you scroll.
 - **Sorting** by popularity, user rating, Metascore, year or title, ascending or descending.
 - **Filters:**
   - **Platforms**, grouped by generation with the newest first: Switch 2, PS5, Xbox Series S/X and PC, then Switch, PS4, Xbox One, and so on. A game matches if it is on any of the selected platforms.
-  - **Genres.** A title must have every selected genre.
+  - **Genres**, including **Open World** for games. A title must have every selected genre.
   - **Played / Not played** for games (**Watched / Not watched** for movies and shows).
   - Release year range, minimum user rating, minimum Metascore, minimum votes, and Steam price.
 - **Played tracking:** tap the circle on any row, or the button on a detail page, to mark a game as played. The marks stay on your phone and survive database updates.

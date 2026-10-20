@@ -10,6 +10,7 @@ import androidx.sqlite.db.SupportSQLiteQuery
 import kotlinx.coroutines.flow.Flow
 
 data class TypeCount(val type: String, val n: Int)
+data class FacetFields(val genres: String, val platforms: String)
 
 @Dao
 interface TitleDao {
@@ -18,6 +19,9 @@ interface TitleDao {
 
     @RawQuery(observedEntities = [TitleEntity::class, PlayedEntity::class])
     fun count(query: SupportSQLiteQuery): Flow<Int>
+
+    @RawQuery
+    suspend fun facetRows(query: SupportSQLiteQuery): List<FacetFields>
 
     @Query(
         """SELECT t.*, (p.id IS NOT NULL) AS played

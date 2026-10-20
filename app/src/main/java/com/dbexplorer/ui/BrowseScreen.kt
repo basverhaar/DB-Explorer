@@ -62,6 +62,7 @@ import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
+import com.dbexplorer.data.FacetCounts
 import com.dbexplorer.data.FacetEntity
 import com.dbexplorer.data.FacetKind
 import com.dbexplorer.data.Filters
@@ -80,7 +81,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -112,6 +115,12 @@ class BrowseViewModel(private val repo: Repository, type: MediaType) : ViewModel
 
     fun update(transform: (Filters) -> Filters) = _filters.update(transform)
 
+    /** Live per-option counts, only computed while the filter sheet is open. */
+    val sheetOpen = MutableStateFlow(false)
+    val facetCounts: StateFlow<FacetCounts?> = combine(settled, sheetOpen) { f, open -> f to open }
+        .mapLatest { (f, open) -> if (open) repo.facetCounts(f) else null }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
     fun setPlayed(id: String, played: Boolean) {
         viewModelScope.launch { repo.setPlayed(id, played) }
     }
@@ -127,7 +136,8 @@ fun BrowseScreen(type: MediaType, onOpen: (String) -> Unit) {
     val genres by vm.genres.collectAsState()
     val platforms by vm.platforms.collectAsState()
     val items = vm.pages.collectAsLazyPagingItems()
-    var showFilters by remember { mutableStateOf(false) }
+    val showFilters by vm.sheetOpen.collectAsState()
+    val facetCounts by vm.facetCounts.collectAsState()
     val listState = vm.listState
 
     // Jump back to the top whenever the query changes (but not when returning to the screen).
@@ -162,7 +172,7 @@ fun BrowseScreen(type: MediaType, onOpen: (String) -> Unit) {
             SortChip(filters, onChange = { f -> vm.update { f } })
             FilterChip(
                 selected = filters.activeCount > 0,
-                onClick = { showFilters = true },
+                onClick = { vm.sheetOpen.value = true },
                 label = { Text(if (filters.activeCount > 0) "Filters (${filters.activeCount})" else "Filters") },
                 leadingIcon = { Icon(Icons.Filled.FilterList, null, Modifier.size(18.dp)) },
             )
@@ -220,7 +230,9 @@ fun BrowseScreen(type: MediaType, onOpen: (String) -> Unit) {
             genres = genres,
             platforms = platforms,
             onChange = { f -> vm.update { f } },
-            onDismiss = { showFilters = false },
+            resultCount = count,
+            liveCounts = facetCounts,
+            onDismiss = { vm.sheetOpen.value = false },
         )
     }
 }
