@@ -333,8 +333,9 @@ def sparql(query):
                 data = json.loads(r.read().decode("utf-8"))
             return [{k: v["value"] for k, v in b.items()} for b in data["results"]["bindings"]]
         except Exception as e:
-            log(f"Wikidata query failed ({e}); retrying")
-            time.sleep(30 * (attempt + 1))
+            log(f"Wikidata query failed ({e!r}); retrying")
+            # 429/503 mean the public endpoint is busy or throttling us: back off generously.
+            time.sleep(60 * (attempt + 1))
     raise RuntimeError("Wikidata query kept failing")
 
 
@@ -439,6 +440,24 @@ def set_info(r, key, value):
     if value:
         lines.append(f"{key}\t{value}")
     r["info"] = "\n".join(lines) or None
+
+
+def carry_over_scores(rows, prev):
+    """When Wikidata is unreachable, keep yesterday's scores instead of dropping them."""
+    old = {r["id"]: r for r in prev}
+    n = 0
+    for r in rows:
+        p = old.get(r["id"])
+        if not p:
+            continue
+        if r.get("metascore") is None and p.get("metascore") is not None:
+            r["metascore"] = p["metascore"]
+            n += 1
+        for line in (p.get("info") or "").split("\n"):
+            key, _, value = line.partition("\t")
+            if value and f"\n{key}\t" not in "\n" + (r.get("info") or ""):
+                set_info(r, key, value)
+    log(f"Kept {n} review scores from the previous build")
 
 
 def apply_film_scores(imdb_rows, by_imdb):
@@ -793,6 +812,8 @@ def main():
         films = run("Wikidata movies", fetch_wikidata_films, lambda: None)
         if films is not None:
             apply_film_scores(imdb, films)
+        if wd_games is None or films is None:
+            carry_over_scores(imdb + games, prev)
 
     # Keep OMDb enrichment from earlier runs so posters accumulate day by day.
     enriched = {r["id"]: r for r in prev if r["source"] == "IMDB" and r.get("enrichedAt")}
