@@ -16,6 +16,7 @@ object Source {
     const val STEAM = "STEAM"
     const val RAWG = "RAWG"
     const val WIKIDATA = "WIKIDATA"
+    const val IGDB = "IGDB"
 }
 
 /**

@@ -510,6 +510,165 @@ def apply_game(r, g):
         set_info(r, "_metacritic", f"https://www.metacritic.com/{g['mcid'].strip('/')}/")
 
 
+# ---------------------------------------------------------------- IGDB
+
+# IGDB (Twitch) - every game incl. brand-new consoles like Switch 2, with an aggregated
+# critic score from professional reviews. Free: needs a Twitch app's client id + secret.
+IGDB_ID = os.environ.get("IGDB_CLIENT_ID", "").strip()
+IGDB_SECRET = os.environ.get("IGDB_CLIENT_SECRET", "").strip()
+
+IGDB_PLATFORMS = {
+    "Nintendo Switch 2": "Nintendo Switch 2", "PlayStation 5": "PlayStation 5",
+    "Xbox Series X|S": "Xbox Series S/X", "PC (Microsoft Windows)": "PC",
+    "Nintendo Switch": "Nintendo Switch", "PlayStation 4": "PlayStation 4", "Xbox One": "Xbox One",
+    "Wii U": "Wii U", "Nintendo 3DS": "Nintendo 3DS", "PlayStation Vita": "PS Vita",
+    "PlayStation 3": "PlayStation 3", "Xbox 360": "Xbox 360", "Wii": "Wii", "Nintendo DS": "Nintendo DS",
+    "PlayStation Portable": "PSP", "PlayStation 2": "PlayStation 2", "Xbox": "Xbox",
+    "Nintendo GameCube": "GameCube", "Game Boy Advance": "Game Boy Advance", "Dreamcast": "Dreamcast",
+    "PlayStation": "PlayStation", "Nintendo 64": "Nintendo 64", "Mac": "macOS", "Linux": "Linux",
+    "iOS": "iOS", "Android": "Android", "Meta Quest 3": "Meta Quest", "Meta Quest 2": "Meta Quest",
+    "Google Stadia": "Stadia", "Super Nintendo Entertainment System": "SNES",
+    "Nintendo Entertainment System": "NES", "Sega Mega Drive/Genesis": "Genesis",
+}
+
+IGDB_FIELDS = ("fields name,slug,url,first_release_date,aggregated_rating,aggregated_rating_count,"
+               "rating,rating_count,total_rating_count,hypes,summary,platforms.name,genres.name,"
+               "cover.image_id,involved_companies.company.name,involved_companies.developer,"
+               "involved_companies.publisher;")
+
+
+def igdb_token():
+    url = ("https://id.twitch.tv/oauth2/token?" + urllib.parse.urlencode(
+        {"client_id": IGDB_ID, "client_secret": IGDB_SECRET, "grant_type": "client_credentials"}))
+    req = urllib.request.Request(url, data=b"", headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.loads(r.read())["access_token"]
+
+
+def igdb_query(token, endpoint, body):
+    for attempt in range(4):
+        req = urllib.request.Request(f"https://api.igdb.com/v4/{endpoint}", data=body.encode(), headers={
+            "Client-ID": IGDB_ID, "Authorization": f"Bearer {token}", "Accept": "application/json",
+            "User-Agent": UA})
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                time.sleep(0.3)  # IGDB allows 4 requests per second
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            if e.code != 429 or attempt == 3:
+                raise
+            time.sleep(2 ** attempt)
+
+
+def fetch_igdb(cfg):
+    token = igdb_token()
+    games = {}
+
+    def collect(where, sort, pages):
+        for page in range(pages):
+            batch = igdb_query(token, "games", f"{IGDB_FIELDS} where {where}; sort {sort}; "
+                                               f"limit 500; offset {page * 500};")
+            for g in batch:
+                if g.get("name"):
+                    games.setdefault(g["id"], g)
+            if len(batch) < 500:
+                break
+        log(f"IGDB: {len(games)} games after '{where[:60]}'")
+
+    base = "parent_game = null & version_parent = null"
+    # 1. Every game that professional critics reviewed.
+    collect(f"{base} & aggregated_rating_count > 0", "aggregated_rating_count desc", cfg.get("igdb_scored_pages", 60))
+    # 2. Released in the last year or coming in the next one, most anticipated/rated first.
+    now = int(time.time())
+    collect(f"{base} & first_release_date >= {now - 365 * 86400} & first_release_date <= {now + 365 * 86400}"
+            f" & (hypes > 2 | total_rating_count > 2)", "hypes desc", cfg.get("igdb_recent_pages", 10))
+    # 3. Popular games on current consoles (platform ids looked up by name).
+    plats = igdb_query(token, "platforms", "fields id,name; limit 500;")
+    consoles = [p for p in plats if IGDB_PLATFORMS.get(p.get("name")) in
+                ("Nintendo Switch 2", "PlayStation 5", "Xbox Series S/X", "Nintendo Switch")]
+    log("IGDB current consoles: " + ", ".join(f"{p['name']} ({p['id']})" for p in consoles))
+    unknown = sorted(p["name"] for p in plats if p.get("name") and p["name"] not in IGDB_PLATFORMS
+                     and re.search(r"switch|playstation|xbox", p["name"], re.I))
+    if unknown:
+        log("IGDB console platforms without a mapping: " + ", ".join(unknown))
+    ids = [str(p["id"]) for p in consoles]
+    if ids:
+        collect(f"{base} & platforms = ({','.join(ids)}) & (total_rating_count > 0 | hypes > 0)",
+                "total_rating_count desc", cfg.get("igdb_console_pages", 20))
+    if not games:
+        raise RuntimeError("IGDB returned no games")
+    return list(games.values())
+
+
+def igdb_row(g):
+    companies = g.get("involved_companies") or []
+    dev = [c["company"]["name"] for c in companies if c.get("developer") and c.get("company")]
+    pub = [c["company"]["name"] for c in companies if c.get("publisher") and c.get("company")]
+    ts = g.get("first_release_date")
+    cover = (g.get("cover") or {}).get("image_id")
+    return {
+        "title": g["name"].strip(),
+        "year": time.gmtime(ts).tm_year if ts else None,
+        "platforms": [IGDB_PLATFORMS[p["name"]] for p in g.get("platforms") or [] if p.get("name") in IGDB_PLATFORMS],
+        "genres": [x["name"] for x in g.get("genres") or [] if x.get("name")],
+        "critic": round(g["aggregated_rating"]) if g.get("aggregated_rating") else None,
+        "critic_count": g.get("aggregated_rating_count") or 0,
+        "user": round(g["rating"] / 10, 2) if g.get("rating") else None,
+        "user_count": g.get("rating_count") or 0,
+        "image": f"https://images.igdb.com/igdb/image/upload/t_cover_big/{cover}.jpg" if cover else None,
+        "summary": g.get("summary"),
+        "developer": ", ".join(dev[:2]) or None,
+        "publisher": ", ".join(pub[:2]) or None,
+        "url": g.get("url") or f"https://www.igdb.com/games/{g.get('slug')}",
+        "slug": g.get("slug") or str(g["id"]),
+        "id": g["id"],
+    }
+
+
+IGDB_GENRES = {"Role-playing (RPG)": "RPG", "Hack and slash/Beat 'em up": "Action",
+               "Turn-based strategy (TBS)": "Strategy", "Real Time Strategy (RTS)": "Strategy",
+               "Point-and-click": "Adventure", "Shooter": "Shooter", "Platform": "Platformer"}
+
+
+def apply_igdb(game_rows, igdb_games):
+    """Adds critic scores/platforms to matching games; returns rows for games we did not have."""
+    by_name = {}
+    for r in game_rows:
+        by_name.setdefault(norm(r["title"]), []).append(r)
+    matched, out = 0, []
+    for g in map(igdb_row, igdb_games):
+        cands = by_name.get(norm(g["title"])) or []
+        target = None
+        if g["year"]:
+            target = next((r for r in cands if r.get("year") and abs(r["year"] - g["year"]) <= 1), None)
+        if target is None and len(cands) == 1 and not cands[0].get("year"):
+            target = cands[0]
+        genres = [IGDB_GENRES.get(x, x) for x in g["genres"]]
+        if target is None:
+            target = row(id=f"igdb:{g['id']}", type="GAME", source="IGDB", externalId=g["slug"],
+                         title=g["title"], year=g["year"], genres=pipes(genres),
+                         rating=g["user"], votes=g["user_count"], developer=g["developer"],
+                         publisher=g["publisher"], imageUrl=g["image"], plot=g["summary"], url=g["url"])
+            out.append(target)
+            by_name.setdefault(norm(g["title"]), []).append(target)
+        else:
+            matched += 1
+            target["year"] = target.get("year") or g["year"]
+            target["plot"] = target.get("plot") or g["summary"]
+            target["imageUrl"] = target.get("imageUrl") or g["image"]
+            target["developer"] = target.get("developer") or g["developer"]
+            target["publisher"] = target.get("publisher") or g["publisher"]
+        target["platforms"] = pipes(split_pipes(target["platforms"]) + g["platforms"])
+        if g["critic"] is not None:
+            set_info(target, "Critic score (IGDB)", f"{g['critic']}/100 from {g['critic_count']} reviews")
+            # Metacritic stays the headline score when we have it; otherwise use the critic average.
+            if target.get("metascore") is None:
+                target["metascore"] = g["critic"]
+                set_info(target, "_critic", "Critics (IGDB)")
+    log(f"IGDB: {matched} games matched, {len(out)} added")
+    return out
+
+
 # ---------------------------------------------------------------- OMDb
 
 def merge_omdb(r, poster, plot, info, metascore):
@@ -613,6 +772,16 @@ def main():
         # Steam rows from the previous build already carry their merged RAWG data.
         steam_prev = previous("STEAM")
         games = steam_prev + (merge_rawg(rawg_games, steam_prev) if rawg_games is not None else previous("RAWG"))
+
+    if IGDB_ID and IGDB_SECRET:
+        igdb_games = run("IGDB", lambda: fetch_igdb(CONFIG), lambda: None)
+        if igdb_games is not None:
+            games = [r for r in games if r["source"] != "IGDB"]
+            games += apply_igdb(games, igdb_games)
+        else:
+            games += previous("IGDB")
+    else:
+        status["IGDB"] = {"ok": False, "message": "No IGDB_CLIENT_ID / IGDB_CLIENT_SECRET secrets configured"}
 
     if CONFIG.get("wikidata", True):
         wd_games = run("Wikidata games", fetch_wikidata_games, lambda: None)

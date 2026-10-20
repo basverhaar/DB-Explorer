@@ -32,6 +32,13 @@ The workflow reads the RAWG API key from a repository secret:
 2. Set the name to `RAWG_KEY` and paste your key as the value.
 3. Open **Actions → Build database → Run workflow** to build the first database right away.
 
+**Recommended:** add `IGDB_CLIENT_ID` and `IGDB_CLIENT_SECRET`. [IGDB](https://www.igdb.com) (owned by Twitch) covers the newest games, including Switch 2, with an average critic score from professional reviews and cover art:
+
+1. Sign in at [dev.twitch.tv/console](https://dev.twitch.tv/console). Twitch requires two-factor authentication on the account.
+2. Choose **Register Your Application**. Use any name, set the OAuth redirect URL to `http://localhost`, choose any category, and set the client type to **Confidential**.
+3. Open the app's **Manage** page. Copy the **Client ID**, then click **New Secret**.
+4. Add both values as repository secrets.
+
 Optional: add an `OMDB_KEY` secret (free from [omdbapi.com](https://www.omdbapi.com/apikey.aspx)). With it, each daily run adds posters, plots and Metascores for about 900 more movies and shows.
 
 ## Features
@@ -54,6 +61,7 @@ Optional: add an `OMDB_KEY` secret (free from [omdbapi.com](https://www.omdbapi.
 | [IMDb datasets](https://developer.imdb.com/non-commercial-datasets/) | Movies and series with at least 1,000 votes: ratings, genres, runtime | None |
 | [SteamSpy](https://steamspy.com/api.php) | Steam games with at least 200 reviews: review score, price, owners, developer | None |
 | [RAWG](https://rawg.io/apidocs) | Popular, top-rated and recently released games on every platform, plus the most popular games per console, including Switch 2 once RAWG lists it | `RAWG_KEY` secret |
+| [IGDB](https://api-docs.igdb.com) | Every game reviewed by critics, plus recent and upcoming games and current-console games (Switch 2, PS5, Xbox Series, Switch): **critic score**, platforms, covers, summary, developer | `IGDB_CLIENT_ID` + `IGDB_CLIENT_SECRET` secrets |
 | [Wikidata](https://www.wikidata.org) | Current **Metacritic** and **OpenCritic** scores for games, including brand-new releases and Switch 2 games; Metacritic and Rotten Tomatoes scores for movies and shows (matched by IMDb ID) | None |
 | [OMDb](https://www.omdbapi.com) | Posters, plots and Metascores for movies and shows | `OMDB_KEY` secret (optional) |
 

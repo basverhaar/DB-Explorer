@@ -1,7 +1,7 @@
 name: Build database
 
 # Builds the catalogue once a day and publishes it to the "data" release,
-# which the app downloads. Needs the RAWG_KEY secret (OMDB_KEY optional).
+# which the app downloads. Secrets: RAWG_KEY, IGDB_CLIENT_ID + IGDB_CLIENT_SECRET; OMDB_KEY optional.
 on:
   schedule:
     - cron: "17 4 * * *"
@@ -26,6 +26,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       RAWG_KEY: ${{ secrets.RAWG_KEY }}
       OMDB_KEY: ${{ secrets.OMDB_KEY }}
+      IGDB_CLIENT_ID: ${{ secrets.IGDB_CLIENT_ID }}
+      IGDB_CLIENT_SECRET: ${{ secrets.IGDB_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@v4
 

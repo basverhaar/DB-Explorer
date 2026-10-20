@@ -231,6 +231,7 @@ private fun sourceLabel(source: String) = when (source) {
     Source.STEAM -> "Steam (via SteamSpy) + RAWG"
     Source.RAWG -> "RAWG"
     Source.WIKIDATA -> "Wikidata"
+    Source.IGDB -> "IGDB"
     else -> source
 }
 
@@ -243,6 +244,7 @@ private fun links(r: TitleRow): List<Pair<String, String>> {
             Source.STEAM -> "Steam"
             Source.RAWG -> "RAWG"
             Source.WIKIDATA -> "Wikidata"
+            Source.IGDB -> "IGDB"
             else -> "Website"
         }
         t.url?.let { add(label to it) }
