@@ -1,0 +1,62 @@
+name: Build database
+
+# Builds the catalogue once a day and publishes it to the "data" release,
+# which the app downloads. Needs the RAWG_KEY secret (OMDB_KEY optional).
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+  push:
+    paths:
+      - "server/**"
+      - ".github/workflows/database.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: database
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RAWG_KEY: ${{ secrets.RAWG_KEY }}
+      OMDB_KEY: ${{ secrets.OMDB_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch previous database
+        run: |
+          mkdir -p prev
+          if gh release download data -p catalogue.db.gz -D prev; then
+            gunzip prev/catalogue.db.gz
+          else
+            echo "No previous database (first run)"
+          fi
+
+      - name: Build database
+        run: python server/build_db.py out prev/catalogue.db
+
+      - name: Publish to the "data" release
+        run: |
+          if ! gh release view data > /dev/null 2>&1; then
+            gh release create data --title "Catalogue database" --latest=false \
+              --notes "Built daily by the 'Build database' workflow. The app downloads these files."
+          fi
+          # Upload the database before the manifest so a new manifest never points at an old file.
+          gh release upload data out/catalogue.db.gz --clobber
+          gh release upload data out/manifest.json --clobber
+
+      - name: Summary
+        run: |
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat out/manifest.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

@@ -5,33 +5,25 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-enum class MediaType(val label: String) {
-    MOVIE("Movies"),
-    TV("TV Shows"),
-    GAME("Games"),
+enum class MediaType(val label: String, val doneLabel: String) {
+    MOVIE("Movies", "Watched"),
+    TV("TV Shows", "Watched"),
+    GAME("Games", "Played"),
 }
 
 object Source {
     const val IMDB = "IMDB"
     const val STEAM = "STEAM"
-    const val STEAM_DETAILS = "STEAM_DETAILS"
     const val RAWG = "RAWG"
-    const val OMDB = "OMDB"
 }
 
 /**
- * Base row of the catalogue. Rewritten on every refresh, so anything fetched
- * per title (posters, plots, Metascores) lives in [ExtraEntity] instead.
+ * One title from the shared catalogue. The whole table is replaced with the
+ * server-built database on every update; nothing in it is edited on the phone.
  */
 @Entity(
     tableName = "titles",
-    indices = [
-        Index("type"),
-        Index("source"),
-        Index("votes"),
-        Index("rating"),
-        Index("year"),
-    ],
+    indices = [Index("type"), Index("votes"), Index("rating"), Index("year"), Index("metascore")],
 )
 data class TitleEntity(
     @PrimaryKey val id: String,
@@ -43,8 +35,10 @@ data class TitleEntity(
     val searchName: String,
     val year: Int?,
     val endYear: Int?,
-    /** Genres wrapped in pipes, e.g. "|Action|Drama|", so a LIKE '%|Drama|%' matches exactly. */
+    /** Wrapped in pipes, e.g. "|Action|Drama|", so LIKE '%|Drama|%' matches exactly. */
     val genres: String,
+    /** Same format as [genres], e.g. "|PC|Nintendo Switch|". */
+    val platforms: String,
     val runtime: Int?,
     /** User rating normalised to 0..10. */
     val rating: Double?,
@@ -52,43 +46,43 @@ data class TitleEntity(
     val metascore: Int?,
     val developer: String?,
     val publisher: String?,
-    val platforms: String?,
     val price: Double?,
     val owners: String?,
     val imageUrl: String?,
-    val updatedAt: Long,
-)
-
-/** Per-title enrichment that survives catalogue refreshes. */
-@Entity(tableName = "extras")
-data class ExtraEntity(
-    @PrimaryKey val id: String,
-    val metascore: Int? = null,
-    val year: Int? = null,
-    val posterUrl: String? = null,
-    val plot: String? = null,
+    val plot: String?,
     /** "Label\tValue" lines shown on the detail screen. */
-    val info: String? = null,
-    val metacriticUrl: String? = null,
-    val enrichedAt: Long = 0,
+    val info: String?,
+    val url: String?,
 )
 
-@Entity(tableName = "genres", primaryKeys = ["type", "name"])
-data class GenreEntity(
+/** Genres and platforms with their title counts, per media type. */
+@Entity(tableName = "facets", primaryKeys = ["kind", "type", "name"])
+data class FacetEntity(
+    val kind: String,
     val type: String,
     val name: String,
     val count: Int,
 )
 
-/** A title joined with its extras, as shown in lists. */
+/** Titles the user has played or watched. Local only; survives catalogue updates. */
+@Entity(tableName = "played")
+data class PlayedEntity(
+    @PrimaryKey val id: String,
+    val playedAt: Long,
+)
+
+/** A title plus whether the user has played/watched it, as shown in lists. */
 data class TitleRow(
     @Embedded val t: TitleEntity,
-    val metaEff: Int?,
-    val yearEff: Int?,
-    val imageEff: String?,
+    val played: Boolean,
 ) {
-    val genreList: List<String> get() = t.genres.split('|').filter { it.isNotBlank() }
+    val genreList: List<String> get() = split(t.genres)
+    val platformList: List<String> get() = split(t.platforms)
+
+    private fun split(s: String) = s.split('|').filter { it.isNotBlank() }
 }
 
-fun genresField(list: Collection<String>): String =
-    if (list.isEmpty()) "" else list.joinToString("|", prefix = "|", postfix = "|")
+object FacetKind {
+    const val GENRE = "genre"
+    const val PLATFORM = "platform"
+}

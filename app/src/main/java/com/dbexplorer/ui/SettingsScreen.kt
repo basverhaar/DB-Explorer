@@ -3,23 +3,18 @@ package com.dbexplorer.ui
 import android.text.format.DateUtils
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -43,16 +38,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.dbexplorer.data.AppSettings
 import com.dbexplorer.data.MediaType
-import com.dbexplorer.data.Source
 import com.dbexplorer.sync.RefreshScheduler
 import com.dbexplorer.sync.RefreshState
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(onBack: () -> Unit) {
     val repo = app().repository
@@ -60,24 +54,19 @@ fun SettingsScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val uri = LocalUriHandler.current
     val settings by repo.settings.settings.collectAsState(initial = null)
-    val statuses by repo.settings.statuses.collectAsState(initial = emptyList())
+    val status by repo.settings.status.collectAsState(initial = null)
     val counts by repo.dao.observeTypeCounts().collectAsState(initial = emptyList())
+    val playedCount by repo.dao.observePlayedCount().collectAsState(initial = 0)
     val stateFlow = remember { RefreshScheduler.state(context) }
     val refresh by stateFlow.collectAsState(initial = RefreshState(false, false, null))
-    var confirmClear by remember { mutableStateOf(false) }
 
     fun save(transform: (AppSettings) -> AppSettings) {
         scope.launch {
             val before = repo.settings.current()
             repo.settings.update(transform)
             val after = repo.settings.current()
-            if (before.wifiOnly != after.wifiOnly) RefreshScheduler.scheduleDaily(context, after.wifiOnly, replace = true)
-            // Pull in new data straight away when a source or key was added.
-            val gained = (after.imdbEnabled && !before.imdbEnabled) ||
-                (after.steamEnabled && !before.steamEnabled) ||
-                (after.omdbKey.isNotBlank() && after.omdbKey != before.omdbKey) ||
-                (after.rawgKey.isNotBlank() && after.rawgKey != before.rawgKey)
-            if (gained) RefreshScheduler.refreshNow(context, after.wifiOnly)
+            if (before.wifiOnly != after.wifiOnly) RefreshScheduler.schedulePeriodic(context, after.wifiOnly, replace = true)
+            if (before.repo != after.repo) RefreshScheduler.refreshNow(context, after.wifiOnly, force = true)
         }
     }
 
@@ -90,6 +79,7 @@ fun SettingsScreen(onBack: () -> Unit) {
         },
     ) { padding ->
         val s = settings ?: return@Scaffold
+        val st = status ?: return@Scaffold
         Column(
             Modifier
                 .padding(padding)
@@ -97,163 +87,116 @@ fun SettingsScreen(onBack: () -> Unit) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // ---- Refresh ----
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Daily refresh", style = MaterialTheme.typography.titleMedium)
+                    Text("Database", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "All databases are refreshed automatically once a day in the background.",
+                        "The database is built once a day on GitHub from IMDb, Steam and RAWG. " +
+                            "This phone only downloads the finished file when there is a new one.",
                         style = MaterialTheme.typography.bodySmall,
                     )
+                    Text(
+                        if (st.builtAt > 0) "Current data built " + DateUtils.getRelativeTimeSpanString(st.builtAt)
+                        else "No database downloaded yet",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    if (st.lastCheck > 0) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                if (st.ok) Icons.Filled.CheckCircle else Icons.Filled.Error,
+                                null,
+                                tint = if (st.ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                            )
+                            Text(
+                                "  Last checked " + DateUtils.getRelativeTimeSpanString(st.lastCheck) + ": " + st.message,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
                     when {
                         refresh.running -> {
                             LinearProgressIndicator(Modifier.fillMaxWidth())
-                            Text(refresh.message ?: "Refreshing…", style = MaterialTheme.typography.bodySmall)
+                            Text(refresh.message ?: "Checking…", style = MaterialTheme.typography.bodySmall)
                         }
-                        refresh.waitingForNetwork -> Text("Refresh queued — waiting for Wi-Fi.", style = MaterialTheme.typography.bodySmall)
-                        else -> Button(onClick = { RefreshScheduler.refreshNow(context, s.wifiOnly) }) { Text("Refresh now") }
-                    }
-                    ToggleRow("Only download on Wi-Fi", "The IMDb download is about 200 MB.", s.wifiOnly) { v ->
-                        save { it.copy(wifiOnly = v) }
+                        refresh.waitingForNetwork -> Text("Update queued — waiting for Wi-Fi.", style = MaterialTheme.typography.bodySmall)
+                        else -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { RefreshScheduler.refreshNow(context, s.wifiOnly) }) { Text("Check for update") }
+                            OutlinedButton(onClick = { RefreshScheduler.refreshNow(context, s.wifiOnly, force = true) }) {
+                                Text("Re-download")
+                            }
+                        }
                     }
                 }
             }
 
-            // ---- Sources ----
-            Text("Sources", style = MaterialTheme.typography.titleLarge)
-            ToggleRow("IMDb — movies & TV", "Official IMDb datasets, updated daily. No key needed.", s.imdbEnabled) { v ->
-                save { it.copy(imdbEnabled = v) }
-            }
-            if (s.imdbEnabled) {
-                Text("Keep titles with at least this many IMDb votes:", style = MaterialTheme.typography.bodySmall)
-                Choices(listOf(250, 1000, 5000, 25000), s.imdbMinVotes) { v -> save { it.copy(imdbMinVotes = v) } }
-            }
-            ToggleRow("Steam — PC games", "Steam store & SteamSpy. Metascores from the Steam store. No key needed.", s.steamEnabled) { v ->
-                save { it.copy(steamEnabled = v) }
-            }
-            if (s.steamEnabled) {
-                Text("Keep games with at least this many Steam reviews:", style = MaterialTheme.typography.bodySmall)
-                Choices(listOf(50, 200, 1000, 5000), s.steamMinReviews) { v -> save { it.copy(steamMinReviews = v) } }
-            }
-
-            // ---- Keys ----
-            Text("Optional free API keys", style = MaterialTheme.typography.titleLarge)
-            KeyField(
-                label = "OMDb API key",
-                help = "Posters, plots, cast and Metacritic Metascores for movies & shows (1,000 titles/day).",
-                value = s.omdbKey,
-                onSave = { v -> save { it.copy(omdbKey = v) } },
-                onGetKey = { uri.openUri("https://www.omdbapi.com/apikey.aspx") },
-            )
-            KeyField(
-                label = "RAWG API key",
-                help = "Metacritic's top-rated games across all platforms, including consoles.",
-                value = s.rawgKey,
-                onSave = { v -> save { it.copy(rawgKey = v) } },
-                onGetKey = { uri.openUri("https://rawg.io/apidocs") },
-            )
-
-            // ---- Status ----
-            Text("Last refresh", style = MaterialTheme.typography.titleLarge)
-            statuses.forEach { st ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        if (st.ok) Icons.Filled.CheckCircle else Icons.Filled.Error,
-                        null,
-                        tint = if (st.ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Only download on Wi-Fi", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "Updates are about 15–30 MB.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Column(Modifier.padding(start = 12.dp)) {
-                        Text(statusLabel(st.source), style = MaterialTheme.typography.titleSmall)
-                        val time = if (st.lastSuccess > 0) {
-                            "Updated " + DateUtils.getRelativeTimeSpanString(st.lastSuccess)
-                        } else {
-                            "Not downloaded yet"
-                        }
-                        Text("$time · ${st.message}", style = MaterialTheme.typography.bodySmall)
-                    }
                 }
+                Switch(checked = s.wifiOnly, onCheckedChange = { v -> save { it.copy(wifiOnly = v) } })
             }
 
-            // ---- Database ----
-            Text("Database", style = MaterialTheme.typography.titleLarge)
+            Text("On this phone", style = MaterialTheme.typography.titleLarge)
             MediaType.entries.forEach { type ->
                 val n = counts.firstOrNull { it.type == type.name }?.n ?: 0
                 Text("${type.label}: ${grouped(n)}")
             }
-            OutlinedButton(onClick = { confirmClear = true }) { Text("Clear database") }
+            Text("Marked as played / watched: ${grouped(playedCount)}")
+
+            if (st.serverSources.isNotBlank()) {
+                Text("Server sources (last build)", style = MaterialTheme.typography.titleLarge)
+                runCatching { JSONObject(st.serverSources) }.getOrNull()?.let { json ->
+                    json.keys().forEach { name ->
+                        val src = json.optJSONObject(name) ?: return@forEach
+                        val ok = src.optBoolean("ok", true)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                if (ok) Icons.Filled.CheckCircle else Icons.Filled.Error,
+                                null,
+                                tint = if (ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                            )
+                            Text("  $name: ${src.optString("message")}", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+
+            Text("Advanced", style = MaterialTheme.typography.titleLarge)
+            RepoField(s.repo) { v -> save { it.copy(repo = v) } }
+            TextButton(onClick = { uri.openUri("https://github.com/${s.repo}/actions/workflows/database.yml") }) {
+                Text("Open the database build on GitHub")
+            }
 
             Text(
-                "Data: IMDb non-commercial datasets (personal use), Steam & SteamSpy, RAWG, OMDb. " +
-                    "Metascores © Metacritic, obtained through Steam, RAWG and OMDb.",
+                "Data: IMDb non-commercial datasets (personal use), Steam & SteamSpy, RAWG. " +
+                    "Metascores © Metacritic, provided through RAWG.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
-
-    if (confirmClear) {
-        AlertDialog(
-            onDismissRequest = { confirmClear = false },
-            title = { Text("Clear database?") },
-            text = { Text("All downloaded titles are deleted. They are downloaded again on the next refresh.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmClear = false
-                    scope.launch { repo.clearAll() }
-                }) { Text("Clear") }
-            },
-            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Cancel") } },
-        )
-    }
-}
-
-private fun statusLabel(source: String) = when (source) {
-    Source.IMDB -> "IMDb"
-    Source.STEAM -> "Steam catalogue"
-    Source.STEAM_DETAILS -> "Steam details & Metascores"
-    Source.RAWG -> "RAWG / Metacritic games"
-    Source.OMDB -> "OMDb posters & Metascores"
-    else -> source
 }
 
 @Composable
-private fun ToggleRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleSmall)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Switch(checked = checked, onCheckedChange = onChange)
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun Choices(options: List<Int>, selected: Int, onSelect: (Int) -> Unit) {
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        options.forEach { n ->
-            FilterChip(selected = n == selected, onClick = { onSelect(n) }, label = { Text(grouped(n)) })
-        }
-    }
-}
-
-@Composable
-private fun KeyField(label: String, help: String, value: String, onSave: (String) -> Unit, onGetKey: () -> Unit) {
+private fun RepoField(value: String, onSave: (String) -> Unit) {
     var text by remember { mutableStateOf(value) }
     LaunchedEffect(value) { text = value }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         OutlinedTextField(
             value = text,
             onValueChange = { text = it },
-            label = { Text(label) },
+            label = { Text("Database repository (owner/name)") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
         )
-        Text(help, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { onSave(text) }, enabled = text.trim() != value) { Text("Save") }
-            TextButton(onClick = onGetKey) { Text("Get a free key") }
+            Button(onClick = { onSave(text) }, enabled = text.trim() != value && text.contains('/')) { Text("Save") }
+            TextButton(onClick = { onSave(AppSettings.DEFAULT_REPO) }) { Text("Reset") }
         }
     }
 }

@@ -6,30 +6,56 @@ An Android app for browsing **movies, TV shows and games** in one place, with fa
 
 1. On your phone, open the [**latest release**](../../releases/tag/latest) and download `DB-Explorer.apk`.
 2. Open the file. If Android asks, allow your browser or file manager to "install unknown apps".
-3. Launch **DB Explorer**. The first download starts straight away (on Wi-Fi by default) and takes a few minutes.
+3. Launch **DB Explorer**. It downloads the latest database straight away.
 
 Every push to this repository builds a new APK through GitHub Actions. New builds install over the old one and keep your data.
 
+## How it works
+
+```
+GitHub Actions (daily, 04:17 UTC)            Phone
+┌──────────────────────────────┐   ┌──────────────────────────────┐
+│ server/build_db.py           │   │ checks manifest.json twice   │
+│  IMDb · SteamSpy · RAWG      │──▶│ a day; downloads the new DB  │
+│  → catalogue.db.gz           │   │ only when there is one       │
+│  → "data" release            │   │ played/watched marks stay    │
+└──────────────────────────────┘   └──────────────────────────────┘
+```
+
+The database is built in one place, the [**Build database**](../../actions/workflows/database.yml) workflow, and published to the [`data` release](../../releases/tag/data). The phone never contacts IMDb, Steam or RAWG itself. It only downloads the finished file, which is about 15–30 MB compressed.
+
+### One-time setup: the RAWG key
+
+The workflow reads the RAWG API key from a repository secret:
+
+1. Open **Settings → Secrets and variables → Actions → New repository secret**.
+2. Set the name to `RAWG_KEY` and paste your key as the value.
+3. Open **Actions → Build database → Run workflow** to build the first database right away.
+
+Optional: add an `OMDB_KEY` secret (free from [omdbapi.com](https://www.omdbapi.com/apikey.aspx)). With it, each daily run adds posters, plots and Metascores for about 900 more movies and shows.
+
 ## Features
 
-- **Three tabs:** Movies, TV Shows and Games.
-- **Search** by title. Every word you type must appear in the title.
+- **Three tabs:** Movies, TV Shows and Games. You can search by title, and every word you type must appear in it.
 - **Sorting** by popularity, user rating, Metascore, year or title, ascending or descending.
-- **Filters:** genres (tap the quick chips or pick several), release year range, minimum user rating, minimum Metascore, minimum votes, and price for games.
-- **Detail pages** with poster or artwork, plot, Metascore, user rating, cast or developer, and links to IMDb, Steam, Metacritic, Rotten Tomatoes and YouTube.
-- **Daily background refresh** through WorkManager, with a progress notification. You can also refresh by hand in Settings, and choose Wi-Fi-only downloads.
+- **Filters:**
+  - **Platforms** such as Nintendo Switch, PlayStation 5, Xbox Series S/X and PC. A game matches if it is on any of the selected platforms.
+  - **Genres.** A title must have every selected genre.
+  - **Played / Not played** for games (**Watched / Not watched** for movies and shows).
+  - Release year range, minimum user rating, minimum Metascore, minimum votes, and Steam price.
+- **Played tracking:** tap the circle on any row, or the button on a detail page, to mark a game as played. The marks stay on your phone and survive database updates.
+- **Detail pages** with artwork, platforms, scores, developer, publisher, ESRB rating and links to IMDb, Steam, RAWG, Metacritic, Rotten Tomatoes and YouTube.
 
 ## Data sources
 
-| Source | What it provides | Key needed |
+| Source | Provides | Key |
 |---|---|---|
-| [IMDb datasets](https://developer.imdb.com/non-commercial-datasets/) | Every movie and series above a vote threshold, with ratings, votes, genres and runtime. Refreshed by IMDb every day. | No |
-| [SteamSpy](https://steamspy.com/api.php) | The Steam catalogue: reviews, owners, price, developer and genres | No |
-| Steam store API | Release dates, descriptions and **Metacritic scores** for the most popular Steam games | No |
-| [OMDb](https://www.omdbapi.com/apikey.aspx) | Posters, plots, cast, Rotten Tomatoes scores and **Metascores** for movies and shows | Free key, optional |
-| [RAWG](https://rawg.io/apidocs) | **Metacritic's** top-rated games on every platform, including consoles | Free key, optional |
+| [IMDb datasets](https://developer.imdb.com/non-commercial-datasets/) | Movies and series with at least 1,000 votes: ratings, genres, runtime | None |
+| [SteamSpy](https://steamspy.com/api.php) | Steam games with at least 200 reviews: review score, price, owners, developer | None |
+| [RAWG](https://rawg.io/apidocs) | About 10,000 popular and top-rated games on every platform: platforms, release dates, **Metacritic scores** | `RAWG_KEY` secret |
+| [OMDb](https://www.omdbapi.com) | Posters, plots and Metascores for movies and shows | `OMDB_KEY` secret (optional) |
 
-Metacritic has no public API and does not allow scraping. The app therefore gets Metascores through Steam, OMDb and RAWG, which publish them legitimately. Paste the optional keys under **Settings → Optional free API keys**.
+RAWG games are merged with Steam games of the same name, so a Steam game also gets its console platforms and its Metascore. You can tune the thresholds in `server/config.json`.
 
 IMDb data is licensed for personal, non-commercial use only.
 

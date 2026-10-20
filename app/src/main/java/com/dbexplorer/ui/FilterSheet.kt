@@ -27,8 +27,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.dbexplorer.data.Filters
-import com.dbexplorer.data.GenreEntity
+import com.dbexplorer.data.FacetEntity
 import com.dbexplorer.data.MediaType
+import com.dbexplorer.data.PlayedFilter
 import com.dbexplorer.data.SortField
 import java.util.Calendar
 import kotlin.math.roundToInt
@@ -39,7 +40,8 @@ private const val MIN_YEAR = 1900
 @Composable
 fun FilterSheet(
     filters: Filters,
-    genres: List<GenreEntity>,
+    genres: List<FacetEntity>,
+    platforms: List<FacetEntity>,
     onChange: (Filters) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -69,6 +71,33 @@ fun FilterSheet(
                     Modifier.weight(1f),
                 )
                 Switch(checked = filters.descending, onCheckedChange = { onChange(filters.copy(descending = it)) })
+            }
+
+            Section("Show")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                PlayedFilter.entries.forEach { option ->
+                    FilterChip(
+                        selected = filters.played == option,
+                        onClick = { onChange(filters.copy(played = option)) },
+                        label = { Text(playedLabel(filters.type, option)) },
+                    )
+                }
+            }
+
+            if (platforms.isNotEmpty()) {
+                Section("Platforms" + if (filters.platforms.isNotEmpty()) " (any of ${filters.platforms.size})" else "")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    platforms.forEach { p ->
+                        val on = p.name in filters.platforms
+                        FilterChip(
+                            selected = on,
+                            onClick = {
+                                onChange(filters.copy(platforms = if (on) filters.platforms - p.name else filters.platforms + p.name))
+                            },
+                            label = { Text("${p.name}  ${compact(p.count)}") },
+                        )
+                    }
+                }
             }
 
             if (genres.isNotEmpty()) {

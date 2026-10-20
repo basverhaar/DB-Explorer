@@ -1,10 +1,8 @@
 package com.dbexplorer.data
 
 import android.content.Context
-import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -15,48 +13,43 @@ import kotlinx.coroutines.flow.map
 private val Context.dataStore by preferencesDataStore(name = "settings")
 
 data class AppSettings(
-    val imdbEnabled: Boolean = true,
-    val steamEnabled: Boolean = true,
-    val wifiOnly: Boolean = true,
-    val imdbMinVotes: Int = 1000,
-    val steamMinReviews: Int = 200,
-    val omdbKey: String = "",
-    val rawgKey: String = "",
-)
+    val wifiOnly: Boolean = false,
+    /** Public GitHub repository whose "data" release holds the catalogue. */
+    val repo: String = DEFAULT_REPO,
+) {
+    companion object {
+        const val DEFAULT_REPO = "basverhaar/DB-Explorer"
+    }
+}
 
-data class SourceStatus(
-    val source: String,
-    val lastSuccess: Long,
-    val lastRun: Long,
-    val message: String,
-    val ok: Boolean,
+/** What the phone knows about the catalogue it has installed. */
+data class SyncStatus(
+    val version: String = "",
+    val builtAt: Long = 0,
+    val lastCheck: Long = 0,
+    val ok: Boolean = true,
+    val message: String = "Not downloaded yet",
+    /** Raw "sources" object from the server manifest. */
+    val serverSources: String = "",
 )
 
 class SettingsStore(private val context: Context) {
     private object K {
-        val imdb = booleanPreferencesKey("imdb_enabled")
-        val steam = booleanPreferencesKey("steam_enabled")
         val wifi = booleanPreferencesKey("wifi_only")
-        val imdbVotes = intPreferencesKey("imdb_min_votes")
-        val steamReviews = intPreferencesKey("steam_min_reviews")
-        val omdb = stringPreferencesKey("omdb_key")
-        val rawg = stringPreferencesKey("rawg_key")
-        fun success(s: String) = longPreferencesKey("status_${s}_success")
-        fun run(s: String) = longPreferencesKey("status_${s}_run")
-        fun msg(s: String) = stringPreferencesKey("status_${s}_msg")
-        fun ok(s: String) = booleanPreferencesKey("status_${s}_ok")
+        val repo = stringPreferencesKey("repo")
+        val version = stringPreferencesKey("db_version")
+        val builtAt = longPreferencesKey("db_built_at")
+        val lastCheck = longPreferencesKey("last_check")
+        val ok = booleanPreferencesKey("last_ok")
+        val message = stringPreferencesKey("last_message")
+        val sources = stringPreferencesKey("server_sources")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p ->
         val d = AppSettings()
         AppSettings(
-            imdbEnabled = p[K.imdb] ?: d.imdbEnabled,
-            steamEnabled = p[K.steam] ?: d.steamEnabled,
             wifiOnly = p[K.wifi] ?: d.wifiOnly,
-            imdbMinVotes = p[K.imdbVotes] ?: d.imdbMinVotes,
-            steamMinReviews = p[K.steamReviews] ?: d.steamMinReviews,
-            omdbKey = p[K.omdb] ?: d.omdbKey,
-            rawgKey = p[K.rawg] ?: d.rawgKey,
+            repo = p[K.repo] ?: d.repo,
         )
     }
 
@@ -65,49 +58,43 @@ class SettingsStore(private val context: Context) {
     suspend fun update(transform: (AppSettings) -> AppSettings) {
         val next = transform(current())
         context.dataStore.edit { p ->
-            p[K.imdb] = next.imdbEnabled
-            p[K.steam] = next.steamEnabled
             p[K.wifi] = next.wifiOnly
-            p[K.imdbVotes] = next.imdbMinVotes
-            p[K.steamReviews] = next.steamMinReviews
-            p[K.omdb] = next.omdbKey.trim()
-            p[K.rawg] = next.rawgKey.trim()
+            p[K.repo] = next.repo.trim().ifEmpty { AppSettings.DEFAULT_REPO }
         }
     }
 
-    val statuses: Flow<List<SourceStatus>> = context.dataStore.data.map { p ->
-        ALL_SOURCES.map { s -> readStatus(p, s) }
+    val status: Flow<SyncStatus> = context.dataStore.data.map { p ->
+        SyncStatus(
+            version = p[K.version] ?: "",
+            builtAt = p[K.builtAt] ?: 0,
+            lastCheck = p[K.lastCheck] ?: 0,
+            ok = p[K.ok] ?: true,
+            message = p[K.message] ?: "Not downloaded yet",
+            serverSources = p[K.sources] ?: "",
+        )
     }
 
-    suspend fun status(source: String): SourceStatus = readStatus(context.dataStore.data.first(), source)
+    suspend fun currentStatus(): SyncStatus = status.first()
 
-    private fun readStatus(p: Preferences, s: String) = SourceStatus(
-        source = s,
-        lastSuccess = p[K.success(s)] ?: 0L,
-        lastRun = p[K.run(s)] ?: 0L,
-        message = p[K.msg(s)] ?: "Never refreshed",
-        ok = p[K.ok(s)] ?: true,
-    )
-
-    suspend fun recordStatus(source: String, ok: Boolean, message: String) {
-        val now = System.currentTimeMillis()
+    suspend fun recordCheck(ok: Boolean, message: String) {
         context.dataStore.edit { p ->
-            p[K.run(source)] = now
-            if (ok) p[K.success(source)] = now
-            p[K.ok(source)] = ok
-            p[K.msg(source)] = message
+            p[K.lastCheck] = System.currentTimeMillis()
+            p[K.ok] = ok
+            p[K.message] = message
         }
     }
 
-    suspend fun clearStatuses() {
+    suspend fun recordInstalled(version: String, builtAt: Long, sources: String) {
         context.dataStore.edit { p ->
-            ALL_SOURCES.forEach { s ->
-                p.remove(K.success(s)); p.remove(K.run(s)); p.remove(K.msg(s)); p.remove(K.ok(s))
-            }
+            p[K.version] = version
+            p[K.builtAt] = builtAt
+            p[K.sources] = sources
         }
     }
 
-    companion object {
-        val ALL_SOURCES = listOf(Source.IMDB, Source.STEAM, Source.STEAM_DETAILS, Source.RAWG, Source.OMDB)
+    suspend fun clearInstalled() {
+        context.dataStore.edit { p ->
+            p.remove(K.version); p.remove(K.builtAt); p.remove(K.sources)
+        }
     }
 }

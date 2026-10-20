@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,18 +14,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
@@ -48,6 +53,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -58,9 +64,11 @@ import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
+import com.dbexplorer.data.FacetEntity
+import com.dbexplorer.data.FacetKind
 import com.dbexplorer.data.Filters
-import com.dbexplorer.data.GenreEntity
 import com.dbexplorer.data.MediaType
+import com.dbexplorer.data.PlayedFilter
 import com.dbexplorer.data.Repository
 import com.dbexplorer.data.SortField
 import com.dbexplorer.data.TitleRow
@@ -77,6 +85,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
 class BrowseViewModel(private val repo: Repository, type: MediaType) : ViewModel() {
@@ -93,7 +102,10 @@ class BrowseViewModel(private val repo: Repository, type: MediaType) : ViewModel
     val total: StateFlow<Int?> = repo.count(Filters(type))
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
-    val genres: StateFlow<List<GenreEntity>> = repo.genres(type)
+    val genres: StateFlow<List<FacetEntity>> = repo.facets(FacetKind.GENRE, type)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val platforms: StateFlow<List<FacetEntity>> = repo.facets(FacetKind.PLATFORM, type)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /** Kept here so the scroll position survives opening a detail screen and switching tabs. */
@@ -101,6 +113,10 @@ class BrowseViewModel(private val repo: Repository, type: MediaType) : ViewModel
     var scrolledFor: Filters? = null
 
     fun update(transform: (Filters) -> Filters) = _filters.update(transform)
+
+    fun setPlayed(id: String, played: Boolean) {
+        viewModelScope.launch { repo.setPlayed(id, played) }
+    }
 }
 
 @Composable
@@ -111,6 +127,7 @@ fun BrowseScreen(type: MediaType, onOpen: (String) -> Unit) {
     val count by vm.count.collectAsState()
     val total by vm.total.collectAsState()
     val genres by vm.genres.collectAsState()
+    val platforms by vm.platforms.collectAsState()
     val items = vm.pages.collectAsLazyPagingItems()
     var showFilters by remember { mutableStateOf(false) }
     val listState = vm.listState
@@ -140,11 +157,14 @@ fun BrowseScreen(type: MediaType, onOpen: (String) -> Unit) {
         )
 
         Row(
-            Modifier.padding(horizontal = 12.dp),
+            Modifier
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             SortChip(filters, onChange = { f -> vm.update { f } })
+            PlayedChip(filters, onChange = { f -> vm.update { f } })
             FilterChip(
                 selected = filters.activeCount > 0,
                 onClick = { showFilters = true },
@@ -154,30 +174,26 @@ fun BrowseScreen(type: MediaType, onOpen: (String) -> Unit) {
             if (filters.activeCount > 0) {
                 TextButton(onClick = { vm.update { it.cleared() } }) { Text("Reset") }
             }
-            Spacer(Modifier.weight(1f))
-            count?.let {
-                Text("${grouped(it)} results", style = MaterialTheme.typography.labelMedium)
-            }
         }
 
-        // Quick genre toggles — the most common genres for this tab.
-        if (genres.isNotEmpty()) {
-            LazyRow(
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                val ordered = genres.sortedByDescending { it.name in filters.genres }
-                items(ordered, key = { it.name }) { g ->
-                    val on = g.name in filters.genres
-                    FilterChip(
-                        selected = on,
-                        onClick = {
-                            vm.update { f -> f.copy(genres = if (on) f.genres - g.name else f.genres + g.name) }
-                        },
-                        label = { Text(g.name) },
-                    )
-                }
+        // Quick toggles: platforms (games only) and the most common genres for this tab.
+        if (platforms.isNotEmpty()) {
+            QuickRow(platforms, filters.platforms) { name, on ->
+                vm.update { f -> f.copy(platforms = if (on) f.platforms - name else f.platforms + name) }
             }
+        }
+        if (genres.isNotEmpty()) {
+            QuickRow(genres, filters.genres) { name, on ->
+                vm.update { f -> f.copy(genres = if (on) f.genres - name else f.genres + name) }
+            }
+        }
+        count?.let {
+            Text(
+                "${grouped(it)} results",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+            )
         }
 
         when {
@@ -190,11 +206,18 @@ fun BrowseScreen(type: MediaType, onOpen: (String) -> Unit) {
             }
             else -> LazyColumn(
                 state = listState,
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
+                contentPadding = PaddingValues(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(count = items.itemCount, key = items.itemKey { it.t.id }) { i ->
-                    items[i]?.let { row -> TitleCard(row, type, filters.sort) { onOpen(row.t.id) } }
+                    items[i]?.let { row ->
+                        TitleCard(
+                            row = row,
+                            type = type,
+                            onClick = { onOpen(row.t.id) },
+                            onTogglePlayed = { vm.setPlayed(row.t.id, !row.played) },
+                        )
+                    }
                 }
             }
         }
@@ -204,9 +227,24 @@ fun BrowseScreen(type: MediaType, onOpen: (String) -> Unit) {
         FilterSheet(
             filters = filters,
             genres = genres,
+            platforms = platforms,
             onChange = { f -> vm.update { f } },
             onDismiss = { showFilters = false },
         )
+    }
+}
+
+@Composable
+private fun QuickRow(facets: List<FacetEntity>, selected: Set<String>, onToggle: (String, Boolean) -> Unit) {
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        val ordered = facets.sortedByDescending { it.name in selected }
+        items(ordered, key = { it.name }) { f ->
+            val on = f.name in selected
+            FilterChip(selected = on, onClick = { onToggle(f.name, on) }, label = { Text(f.name) })
+        }
     }
 }
 
@@ -250,17 +288,52 @@ private fun SortChip(filters: Filters, onChange: (Filters) -> Unit) {
     }
 }
 
+fun playedLabel(type: MediaType, filter: PlayedFilter) = when (filter) {
+    PlayedFilter.ANY -> "All"
+    PlayedFilter.DONE -> type.doneLabel
+    PlayedFilter.NOT_DONE -> "Not ${type.doneLabel.lowercase()}"
+}
+
 @Composable
-private fun TitleCard(row: TitleRow, type: MediaType, sort: SortField, onClick: () -> Unit) {
+private fun PlayedChip(filters: Filters, onChange: (Filters) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        FilterChip(
+            selected = filters.played != PlayedFilter.ANY,
+            onClick = { open = true },
+            label = { Text(playedLabel(filters.type, filters.played)) },
+            leadingIcon = { Icon(Icons.Filled.CheckCircle, null, Modifier.size(18.dp)) },
+        )
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            PlayedFilter.entries.forEach { option ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            playedLabel(filters.type, option),
+                            fontWeight = if (option == filters.played) FontWeight.Bold else null,
+                        )
+                    },
+                    onClick = {
+                        open = false
+                        onChange(filters.copy(played = option))
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TitleCard(row: TitleRow, type: MediaType, onClick: () -> Unit, onTogglePlayed: () -> Unit) {
     val t = row.t
     Card(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
-        Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(start = 8.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             val artModifier = if (type == MediaType.GAME) {
-                Modifier.width(120.dp).height(56.dp)
+                Modifier.width(112.dp).height(56.dp)
             } else {
                 Modifier.width(56.dp).height(84.dp)
             }
-            Artwork(row.imageEff, type, artModifier.clip(RoundedCornerShape(6.dp)))
+            Artwork(t.imageUrl, type, artModifier.clip(RoundedCornerShape(6.dp)))
             Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
                 Text(
                     t.title,
@@ -281,6 +354,15 @@ private fun TitleCard(row: TitleRow, type: MediaType, sort: SortField, onClick: 
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+                if (type == MediaType.GAME && row.platformList.isNotEmpty()) {
+                    Text(
+                        row.platformList.joinToString(" · ") { shortPlatform(it) },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     t.rating?.let { r ->
                         Icon(Icons.Filled.Star, null, Modifier.size(14.dp), tint = Color(0xFFF5B82E))
@@ -291,18 +373,40 @@ private fun TitleCard(row: TitleRow, type: MediaType, sort: SortField, onClick: 
                     }
                     if (type == MediaType.GAME) {
                         priceText(t.price)?.let {
-                            Text("   $it", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            Text("   $it", style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }
             }
-            row.metaEff?.let { MetascoreBadge(it) }
+            t.metascore?.let { MetascoreBadge(it) }
+            IconButton(onClick = onTogglePlayed) {
+                if (row.played) {
+                    Icon(Icons.Filled.CheckCircle, "Unmark ${type.doneLabel.lowercase()}", tint = MaterialTheme.colorScheme.primary)
+                } else {
+                    Icon(Icons.Outlined.RadioButtonUnchecked, "Mark as ${type.doneLabel.lowercase()}", tint = MaterialTheme.colorScheme.outline)
+                }
+            }
         }
     }
 }
 
+/** Compact platform names for list rows, e.g. "PlayStation 5" → "PS5". */
+fun shortPlatform(name: String): String = when (name) {
+    "PlayStation 5" -> "PS5"
+    "PlayStation 4" -> "PS4"
+    "PlayStation 3" -> "PS3"
+    "PlayStation 2" -> "PS2"
+    "PlayStation" -> "PS1"
+    "PS Vita" -> "Vita"
+    "Xbox Series S/X" -> "Xbox Series"
+    "Nintendo Switch" -> "Switch"
+    "Nintendo 3DS" -> "3DS"
+    "Nintendo DS" -> "DS"
+    else -> name
+}
+
 fun yearText(row: TitleRow): String? {
-    val y = row.yearEff ?: return null
+    val y = row.t.year ?: return null
     val end = row.t.endYear
     return when {
         row.t.type != MediaType.TV.name -> y.toString()
@@ -320,47 +424,47 @@ fun priceText(price: Double?): String? = when {
 
 @Composable
 private fun EmptyCatalogue(type: MediaType) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val stateFlow = remember { RefreshScheduler.state(context) }
     val state by stateFlow.collectAsState(initial = RefreshState(false, false, null))
     val settings by app().repository.settings.settings.collectAsState(initial = null)
+    val status by app().repository.settings.status.collectAsState(initial = null)
     Column(
         Modifier.fillMaxSize().padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Icon(type.icon(), null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
-        val disabled = settings?.let {
-            (type == MediaType.GAME && !it.steamEnabled && it.rawgKey.isBlank()) ||
-                (type != MediaType.GAME && !it.imdbEnabled)
-        } == true
         when {
-            disabled -> Text("The source for ${type.label.lowercase()} is turned off in Settings.")
             state.running -> {
-                Text("Downloading the ${type.label.lowercase()} database…")
+                Text(state.message ?: "Downloading the database…")
                 LinearProgressIndicator(Modifier.fillMaxWidth())
             }
-            state.waitingForNetwork -> Text("Waiting for Wi-Fi to download the databases. You can allow mobile data in Settings.")
+            state.waitingForNetwork -> Text("Waiting for Wi-Fi to download the database. You can allow mobile data in Settings.")
             else -> {
-                Text("No ${type.label.lowercase()} downloaded yet.")
+                Text(
+                    if (status?.ok == false) status?.message.orEmpty()
+                    else "No ${type.label.lowercase()} downloaded yet."
+                )
                 TextButton(onClick = {
-                    RefreshScheduler.refreshNow(context, settings?.wifiOnly ?: true)
+                    RefreshScheduler.refreshNow(context, settings?.wifiOnly ?: false, force = true)
                 }) { Text("Download now") }
             }
         }
+        Spacer(Modifier.height(8.dp))
     }
 }
 
 @Composable
 fun RefreshBanner() {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val stateFlow = remember { RefreshScheduler.state(context) }
     val state by stateFlow.collectAsState(initial = RefreshState(false, false, null))
     if (state.running) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp)) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
             Text(
-                state.message ?: "Refreshing databases…",
+                state.message ?: "Checking for updates…",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,

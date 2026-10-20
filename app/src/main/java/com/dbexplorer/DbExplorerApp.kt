@@ -8,7 +8,6 @@ import com.dbexplorer.sync.RefreshScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class DbExplorerApp : Application() {
@@ -21,10 +20,16 @@ class DbExplorerApp : Application() {
         repository = Repository(AppDatabase.create(this), SettingsStore(this))
         appScope.launch {
             val s = repository.settings.current()
-            RefreshScheduler.scheduleDaily(this@DbExplorerApp, s.wifiOnly)
-            // First launch: start downloading straight away instead of waiting a day.
-            val neverRan = repository.settings.statuses.first().all { it.lastRun == 0L }
-            if (neverRan) RefreshScheduler.refreshNow(this@DbExplorerApp, s.wifiOnly)
+            RefreshScheduler.schedulePeriodic(this@DbExplorerApp, s.wifiOnly)
+            // Check on launch too when the last check is old (or there is no data yet).
+            val status = repository.settings.currentStatus()
+            if (status.version.isEmpty() || System.currentTimeMillis() - status.lastCheck > 6 * HOUR) {
+                RefreshScheduler.refreshNow(this@DbExplorerApp, s.wifiOnly)
+            }
         }
+    }
+
+    private companion object {
+        const val HOUR = 60L * 60 * 1000
     }
 }
