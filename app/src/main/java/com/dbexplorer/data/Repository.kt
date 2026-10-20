@@ -9,7 +9,8 @@ class Repository(val db: AppDatabase, val settings: SettingsStore) {
     val dao = db.dao()
 
     fun pages(filters: Filters): Flow<PagingData<TitleRow>> =
-        Pager(PagingConfig(pageSize = 40, enablePlaceholders = false)) {
+        // Rows are read from the database 30 at a time as the list scrolls.
+        Pager(PagingConfig(pageSize = 30, prefetchDistance = 15, initialLoadSize = 30, enablePlaceholders = false)) {
             dao.page(QueryBuilder.page(filters))
         }.flow
 

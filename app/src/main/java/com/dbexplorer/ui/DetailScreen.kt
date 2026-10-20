@@ -126,7 +126,7 @@ fun DetailScreen(id: String, onBack: () -> Unit) {
 
             if (r.platformList.isNotEmpty()) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    r.platformList.forEach { AssistChip(onClick = {}, label = { Text(it) }) }
+                    sortPlatforms(r.platformList).forEach { AssistChip(onClick = {}, label = { Text(it) }) }
                 }
             }
             if (r.genreList.isNotEmpty()) {
@@ -147,10 +147,8 @@ fun DetailScreen(id: String, onBack: () -> Unit) {
                 t.publisher?.let { add("Publisher" to it) }
                 priceText(t.price)?.let { add("Price (Steam)" to it) }
                 t.owners?.let { add("Owners (est.)" to it) }
-                t.info?.lines()?.forEach { line ->
-                    val parts = line.split('\t', limit = 2)
-                    if (parts.size == 2) add(parts[0] to parts[1])
-                }
+                // Keys starting with "_" are metadata for the app, not facts to show.
+                infoMap(t.info).filterKeys { !it.startsWith("_") }.forEach { (k, v) -> add(k to v) }
                 add("Source" to sourceLabel(t.source))
             }
             facts.forEach { (k, v) -> Fact(k, v) }
@@ -187,11 +185,12 @@ private fun Header(r: TitleRow) {
 @Composable
 private fun Scores(r: TitleRow) {
     val t = r.t
+    val critic = infoMap(t.info)["_critic"] ?: "Metascore"
     Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) {
         t.metascore?.let { score ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 MetascoreBadge(score, big = true)
-                Text("  Metascore", style = MaterialTheme.typography.labelLarge)
+                Text("  $critic", style = MaterialTheme.typography.labelLarge)
             }
         }
         t.rating?.let { rating ->
@@ -231,6 +230,7 @@ private fun sourceLabel(source: String) = when (source) {
     Source.IMDB -> "IMDb datasets"
     Source.STEAM -> "Steam (via SteamSpy) + RAWG"
     Source.RAWG -> "RAWG"
+    Source.WIKIDATA -> "Wikidata"
     else -> source
 }
 
@@ -242,10 +242,12 @@ private fun links(r: TitleRow): List<Pair<String, String>> {
             Source.IMDB -> "IMDb"
             Source.STEAM -> "Steam"
             Source.RAWG -> "RAWG"
+            Source.WIKIDATA -> "Wikidata"
             else -> "Website"
         }
         t.url?.let { add(label to it) }
-        add("Metacritic" to "https://www.metacritic.com/search/$q/")
+        add("Metacritic" to (infoMap(t.info)["_metacritic"] ?: "https://www.metacritic.com/search/$q/"))
+        if (t.type == MediaType.GAME.name) add("OpenCritic" to "https://opencritic.com/search?q=$q")
         if (t.type != MediaType.GAME.name) {
             add("Rotten Tomatoes" to "https://www.rottentomatoes.com/search?search=$q")
         } else if (t.source != Source.STEAM) {
@@ -254,3 +256,10 @@ private fun links(r: TitleRow): List<Pair<String, String>> {
         add("YouTube trailer" to "https://www.youtube.com/results?search_query=$q+trailer")
     }
 }
+
+/** Parses the "Label\tValue" lines of [TitleEntity.info]. */
+fun infoMap(info: String?): Map<String, String> =
+    info.orEmpty().lines().mapNotNull { line ->
+        val parts = line.split('\t', limit = 2)
+        if (parts.size == 2) parts[0] to parts[1] else null
+    }.toMap()

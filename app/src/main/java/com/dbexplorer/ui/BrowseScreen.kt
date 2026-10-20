@@ -15,10 +15,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
@@ -32,6 +28,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -60,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.paging.LoadState
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import androidx.paging.compose.collectAsLazyPagingItems
@@ -157,14 +155,11 @@ fun BrowseScreen(type: MediaType, onOpen: (String) -> Unit) {
         )
 
         Row(
-            Modifier
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp),
+            Modifier.padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             SortChip(filters, onChange = { f -> vm.update { f } })
-            PlayedChip(filters, onChange = { f -> vm.update { f } })
             FilterChip(
                 selected = filters.activeCount > 0,
                 onClick = { showFilters = true },
@@ -174,26 +169,14 @@ fun BrowseScreen(type: MediaType, onOpen: (String) -> Unit) {
             if (filters.activeCount > 0) {
                 TextButton(onClick = { vm.update { it.cleared() } }) { Text("Reset") }
             }
-        }
-
-        // Quick toggles: platforms (games only) and the most common genres for this tab.
-        if (platforms.isNotEmpty()) {
-            QuickRow(platforms, filters.platforms) { name, on ->
-                vm.update { f -> f.copy(platforms = if (on) f.platforms - name else f.platforms + name) }
+            Spacer(Modifier.weight(1f))
+            count?.let {
+                Text(
+                    "${grouped(it)} results",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-        }
-        if (genres.isNotEmpty()) {
-            QuickRow(genres, filters.genres) { name, on ->
-                vm.update { f -> f.copy(genres = if (on) f.genres - name else f.genres + name) }
-            }
-        }
-        count?.let {
-            Text(
-                "${grouped(it)} results",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
-            )
         }
 
         when {
@@ -219,6 +202,14 @@ fun BrowseScreen(type: MediaType, onOpen: (String) -> Unit) {
                         )
                     }
                 }
+                // More rows are fetched page by page as you scroll; show that it is happening.
+                if (items.loadState.append is LoadState.Loading) {
+                    item(key = "loading") {
+                        Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(Modifier.size(28.dp))
+                        }
+                    }
+                }
             }
         }
     }
@@ -231,20 +222,6 @@ fun BrowseScreen(type: MediaType, onOpen: (String) -> Unit) {
             onChange = { f -> vm.update { f } },
             onDismiss = { showFilters = false },
         )
-    }
-}
-
-@Composable
-private fun QuickRow(facets: List<FacetEntity>, selected: Set<String>, onToggle: (String, Boolean) -> Unit) {
-    LazyRow(
-        contentPadding = PaddingValues(horizontal = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        val ordered = facets.sortedByDescending { it.name in selected }
-        items(ordered, key = { it.name }) { f ->
-            val on = f.name in selected
-            FilterChip(selected = on, onClick = { onToggle(f.name, on) }, label = { Text(f.name) })
-        }
     }
 }
 
@@ -295,35 +272,6 @@ fun playedLabel(type: MediaType, filter: PlayedFilter) = when (filter) {
 }
 
 @Composable
-private fun PlayedChip(filters: Filters, onChange: (Filters) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        FilterChip(
-            selected = filters.played != PlayedFilter.ANY,
-            onClick = { open = true },
-            label = { Text(playedLabel(filters.type, filters.played)) },
-            leadingIcon = { Icon(Icons.Filled.CheckCircle, null, Modifier.size(18.dp)) },
-        )
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            PlayedFilter.entries.forEach { option ->
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            playedLabel(filters.type, option),
-                            fontWeight = if (option == filters.played) FontWeight.Bold else null,
-                        )
-                    },
-                    onClick = {
-                        open = false
-                        onChange(filters.copy(played = option))
-                    },
-                )
-            }
-        }
-    }
-}
-
-@Composable
 private fun TitleCard(row: TitleRow, type: MediaType, onClick: () -> Unit, onTogglePlayed: () -> Unit) {
     val t = row.t
     Card(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
@@ -356,7 +304,7 @@ private fun TitleCard(row: TitleRow, type: MediaType, onClick: () -> Unit, onTog
                 }
                 if (type == MediaType.GAME && row.platformList.isNotEmpty()) {
                     Text(
-                        row.platformList.joinToString(" · ") { shortPlatform(it) },
+                        sortPlatforms(row.platformList).joinToString(" · ") { shortPlatform(it) },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
                         maxLines = 1,
@@ -399,6 +347,7 @@ fun shortPlatform(name: String): String = when (name) {
     "PlayStation" -> "PS1"
     "PS Vita" -> "Vita"
     "Xbox Series S/X" -> "Xbox Series"
+    "Nintendo Switch 2" -> "Switch 2"
     "Nintendo Switch" -> "Switch"
     "Nintendo 3DS" -> "3DS"
     "Nintendo DS" -> "DS"

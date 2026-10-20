@@ -1,15 +1,16 @@
 {
   "imdb_min_votes": 1000,
   "steam_min_reviews": 200,
-  "rawg_popular_pages": 200,
+  "rawg_popular_pages": 150,
   "rawg_top_pages": 50,
   "omdb_per_run": 900,
-  "rawg_platform_pages": {
-    "_comment": "RAWG platform id -> pages of 40 popular games",
-    "187": 25,
-    "7": 25,
-    "186": 25,
-    "18": 10,
-    "1": 10
+  "rawg_recent_pages": 25,
+  "rawg_platforms": {
+    "Nintendo Switch 2": 25,
+    "PlayStation 5": 25,
+    "Xbox Series S/X": 25,
+    "Nintendo Switch": 20,
+    "PlayStation 4": 10,
+    "Xbox One": 10
   }
 }

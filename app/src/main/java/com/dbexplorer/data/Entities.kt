@@ -15,6 +15,7 @@ object Source {
     const val IMDB = "IMDB"
     const val STEAM = "STEAM"
     const val RAWG = "RAWG"
+    const val WIKIDATA = "WIKIDATA"
 }
 
 /**

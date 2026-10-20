@@ -16,13 +16,13 @@ Every push to this repository builds a new APK through GitHub Actions. New build
 GitHub Actions (daily, 04:17 UTC)            Phone
 ┌──────────────────────────────┐   ┌──────────────────────────────┐
 │ server/build_db.py           │   │ checks manifest.json twice   │
-│  IMDb · SteamSpy · RAWG      │──▶│ a day; downloads the new DB  │
+│  IMDb·Steam·RAWG·Wikidata    │──▶│ a day; downloads the new DB  │
 │  → catalogue.db.gz           │   │ only when there is one       │
 │  → "data" release            │   │ played/watched marks stay    │
 └──────────────────────────────┘   └──────────────────────────────┘
 ```
 
-The database is built in one place, the [**Build database**](../../actions/workflows/database.yml) workflow, and published to the [`data` release](../../releases/tag/data). The phone never contacts IMDb, Steam or RAWG itself. It only downloads the finished file, which is about 15–30 MB compressed.
+The database is built in one place, the [**Build database**](../../actions/workflows/database.yml) workflow, and published to the [`data` release](../../releases/tag/data). The phone never contacts the sources itself. It only downloads the finished file, which is about 6 MB compressed.
 
 ### One-time setup: the RAWG key
 
@@ -37,9 +37,10 @@ Optional: add an `OMDB_KEY` secret (free from [omdbapi.com](https://www.omdbapi.
 ## Features
 
 - **Three tabs:** Movies, TV Shows and Games. You can search by title, and every word you type must appear in it.
+- All filters sit behind the **Filters** button, so the list stays clean. The list loads 30 rows at a time as you scroll.
 - **Sorting** by popularity, user rating, Metascore, year or title, ascending or descending.
 - **Filters:**
-  - **Platforms** such as Nintendo Switch, PlayStation 5, Xbox Series S/X and PC. A game matches if it is on any of the selected platforms.
+  - **Platforms**, grouped by generation with the newest first: Switch 2, PS5, Xbox Series S/X and PC, then Switch, PS4, Xbox One, and so on. A game matches if it is on any of the selected platforms.
   - **Genres.** A title must have every selected genre.
   - **Played / Not played** for games (**Watched / Not watched** for movies and shows).
   - Release year range, minimum user rating, minimum Metascore, minimum votes, and Steam price.
@@ -52,7 +53,8 @@ Optional: add an `OMDB_KEY` secret (free from [omdbapi.com](https://www.omdbapi.
 |---|---|---|
 | [IMDb datasets](https://developer.imdb.com/non-commercial-datasets/) | Movies and series with at least 1,000 votes: ratings, genres, runtime | None |
 | [SteamSpy](https://steamspy.com/api.php) | Steam games with at least 200 reviews: review score, price, owners, developer | None |
-| [RAWG](https://rawg.io/apidocs) | About 10,000 popular and top-rated games on every platform: platforms, release dates, **Metacritic scores** | `RAWG_KEY` secret |
+| [RAWG](https://rawg.io/apidocs) | Popular, top-rated and recently released games on every platform, plus the most popular games per console, including Switch 2 once RAWG lists it | `RAWG_KEY` secret |
+| [Wikidata](https://www.wikidata.org) | Current **Metacritic** and **OpenCritic** scores for games, including brand-new releases and Switch 2 games; Metacritic and Rotten Tomatoes scores for movies and shows (matched by IMDb ID) | None |
 | [OMDb](https://www.omdbapi.com) | Posters, plots and Metascores for movies and shows | `OMDB_KEY` secret (optional) |
 
 RAWG games are merged with Steam games of the same name, so a Steam game also gets its console platforms and its Metascore. You can tune the thresholds in `server/config.json`.

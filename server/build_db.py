@@ -197,7 +197,7 @@ def fetch_steam(min_reviews):
 
 # ---------------------------------------------------------------- RAWG
 
-def fetch_rawg(popular_pages, top_pages, platform_pages=None):
+def fetch_rawg(cfg):
     games = {}
 
     def pages(ordering, count, extra=""):
@@ -214,17 +214,39 @@ def fetch_rawg(popular_pages, top_pages, platform_pages=None):
                 if g.get("id") and g.get("name"):
                     games.setdefault(g["id"], g)
             if page % 25 == 0:
-                log(f"RAWG {ordering}: page {page}, {len(games)} games")
+                log(f"RAWG {ordering}{extra}: page {page}, {len(games)} games")
             if not data.get("next"):
                 return
             time.sleep(0.3)
 
-    pages("-added", popular_pages)
-    pages("-metacritic", top_pages, "&metacritic=1,100")
-    # Popular games per current console, so e.g. PS5 and Switch are well covered.
-    for platform_id, count in (platform_pages or {}).items():
-        if platform_id.isdigit():
-            pages("-added", count, f"&platforms={platform_id}")
+    pages("-added", cfg["rawg_popular_pages"])
+    pages("-metacritic", cfg["rawg_top_pages"], "&metacritic=1,100")
+
+    # Games released in the last year (and announced for the next months), most popular first.
+    today = time.gmtime()
+    start = f"{today.tm_year - 1}-{today.tm_mon:02d}-01"
+    end = f"{today.tm_year + 1}-{today.tm_mon:02d}-01"
+    pages("-added", cfg["rawg_recent_pages"], f"&dates={start},{end}")
+
+    # Popular games per console, newest consoles included. Platforms are looked up by name
+    # so new ones (e.g. Nintendo Switch 2) are picked up as soon as RAWG lists them.
+    wanted = cfg.get("rawg_platforms") or {}
+    if wanted:
+        ids = {}
+        url = f"https://api.rawg.io/api/platforms?key={RAWG_KEY}&page_size=50"
+        while url:
+            data = get_json(url)
+            for p in data.get("results") or []:
+                ids[norm(p["name"])] = (p["id"], p["name"])
+            url = data.get("next")
+        log("RAWG platforms: " + ", ".join(sorted(name for _, name in ids.values())))
+        for name, count in wanted.items():
+            found = ids.get(norm(name))
+            if not found:
+                log(f"RAWG: platform '{name}' not listed yet")
+                continue
+            pages("-added", count, f"&platforms={found[0]}")
+
     if not games:
         raise RuntimeError("RAWG returned no games")
     return list(games.values())
@@ -276,7 +298,221 @@ def merge_rawg(games, steam_rows):
     return out
 
 
+# ---------------------------------------------------------------- Wikidata
+
+# Review scores (Metacritic, OpenCritic, Rotten Tomatoes) that Wikidata editors copy from
+# the review sites, including for brand-new games. CC0 data, no key needed.
+WDQS = "https://query.wikidata.org/sparql"
+CRITICS = ("Metacritic", "OpenCritic", "Rotten Tomatoes")
+
+# Wikidata platform labels -> the names RAWG uses (anything else is ignored).
+WD_PLATFORMS = {
+    "Nintendo Switch 2": "Nintendo Switch 2", "PlayStation 5": "PlayStation 5",
+    "Xbox Series X and Series S": "Xbox Series S/X", "Xbox Series X/S": "Xbox Series S/X",
+    "Microsoft Windows": "PC", "Nintendo Switch": "Nintendo Switch", "PlayStation 4": "PlayStation 4",
+    "Xbox One": "Xbox One", "macOS": "macOS", "Linux": "Linux", "Android": "Android", "iOS": "iOS",
+    "PlayStation 3": "PlayStation 3", "Xbox 360": "Xbox 360", "Wii U": "Wii U", "Wii": "Wii",
+    "Nintendo 3DS": "Nintendo 3DS", "Nintendo DS": "Nintendo DS", "PlayStation Vita": "PS Vita",
+    "PlayStation Portable": "PSP", "PlayStation 2": "PlayStation 2", "Xbox": "Xbox",
+    "GameCube": "GameCube", "Nintendo GameCube": "GameCube", "Game Boy Advance": "Game Boy Advance",
+    "PlayStation": "PlayStation", "Nintendo 64": "Nintendo 64", "Dreamcast": "Dreamcast",
+    "Stadia": "Stadia", "Meta Quest": "Meta Quest", "Steam Deck": "PC",
+}
+
+
+def sparql(query):
+    body = urllib.parse.urlencode({"query": query}).encode()
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(WDQS, data=body, headers={
+                "User-Agent": UA + " (https://github.com/basverhaar/DB-Explorer)",
+                "Accept": "application/sparql-results+json",
+                "Content-Type": "application/x-www-form-urlencoded",
+            })
+            with urllib.request.urlopen(req, timeout=300) as r:
+                data = json.loads(r.read().decode("utf-8"))
+            return [{k: v["value"] for k, v in b.items()} for b in data["results"]["bindings"]]
+        except Exception as e:
+            log(f"Wikidata query failed ({e}); retrying")
+            time.sleep(30 * (attempt + 1))
+    raise RuntimeError("Wikidata query kept failing")
+
+
+def qid(uri):
+    return uri.rsplit("/", 1)[-1]
+
+
+SCORE_QUERY = """
+SELECT ?item ?label ?score ?critic ?mcid ?imdb WHERE {
+  ?item p:P444 ?st .
+  ?st ps:P444 ?score ; pq:P447 ?c .
+  ?c rdfs:label ?critic . FILTER(LANG(?critic) = "en" && ?critic IN ("Metacritic", "OpenCritic", "Rotten Tomatoes"))
+  ?item wdt:P31 wd:%s .
+  OPTIONAL { ?item rdfs:label ?label . FILTER(LANG(?label) = "en") }
+  OPTIONAL { ?item wdt:P1712 ?mcid }
+  %s
+}"""
+
+
+def parse_score(text, critic):
+    """'92/100' -> 92; Rotten Tomatoes '93%' -> '93%'. User scores ('8.1/10') are skipped."""
+    text = (text or "").strip()
+    if critic == "Rotten Tomatoes":
+        m = re.search(r"(\d+)\s*%", text)
+        return f"{m.group(1)}%" if m else None
+    m = re.search(r"(\d+(?:\.\d+)?)\s*/\s*100\b", text)
+    if m:
+        return round(float(m.group(1)))
+    if re.fullmatch(r"\d{1,3}", text) and 0 < int(text) <= 100:
+        return int(text)
+    return None
+
+
+def collect_scores(rows):
+    """Groups SPARQL rows by item: best score per critic plus the Metacritic page id."""
+    items = {}
+    for r in rows:
+        it = items.setdefault(qid(r["item"]), {"label": r.get("label"), "scores": {}, "mcid": None,
+                                                "imdb": r.get("imdb")})
+        v = parse_score(r.get("score"), r["critic"])
+        if v is not None:
+            old = it["scores"].get(r["critic"])
+            # Several scores (per platform); keep the highest.
+            if old is None or (isinstance(v, int) and v > old):
+                it["scores"][r["critic"]] = v
+        if r.get("mcid"):
+            it["mcid"] = r["mcid"]
+    return {k: v for k, v in items.items() if v["scores"]}
+
+
+def fetch_wikidata_games():
+    games = collect_scores(sparql(SCORE_QUERY % ("Q7889", "")))
+    log(f"Wikidata: {len(games)} games with review scores")
+    # Platforms and first release date for scored games plus everything released recently,
+    # so new consoles (Switch 2) have their games even before reviews are in.
+    since = f"{time.gmtime().tm_year - 2}-01-01T00:00:00Z"
+    extra = sparql("""
+SELECT ?item ?label ?platform (MIN(?date) AS ?released) WHERE {
+  ?item wdt:P31 wd:Q7889 ; wdt:P400 ?p .
+  ?p rdfs:label ?platform . FILTER(LANG(?platform) = "en")
+  OPTIONAL { ?item wdt:P577 ?date }
+  OPTIONAL { ?item rdfs:label ?label . FILTER(LANG(?label) = "en") }
+  { ?item p:P444/pq:P447 ?c . ?c rdfs:label ?cl . FILTER(LANG(?cl) = "en" && ?cl IN ("Metacritic", "OpenCritic")) }
+  UNION
+  { ?item wdt:P577 ?d . FILTER(?d >= "%s"^^xsd:dateTime) }
+} GROUP BY ?item ?label ?platform""" % since)
+    for r in extra:
+        g = games.setdefault(qid(r["item"]), {"label": r.get("label"), "scores": {}, "mcid": None, "imdb": None})
+        name = WD_PLATFORMS.get(r["platform"])
+        if name:
+            g.setdefault("platforms", set()).add(name)
+        y = year_of(r.get("released"))
+        if y and (not g.get("year") or y < g["year"]):
+            g["year"] = y
+    # Keep scored games plus recent console games; drop unlabeled items.
+    games = {k: g for k, g in games.items() if g.get("label") and (g["scores"] or g.get("platforms"))}
+    log(f"Wikidata: {len(games)} games after adding platforms/release dates")
+    return games
+
+
+def fetch_wikidata_films():
+    films = collect_scores(sparql(SCORE_QUERY % ("Q11424", "?item wdt:P345 ?imdb .")))
+    series = collect_scores(sparql(SCORE_QUERY % ("Q5398426", "?item wdt:P345 ?imdb .")))
+    films.update(series)
+    by_imdb = {f["imdb"]: f for f in films.values() if f.get("imdb")}
+    log(f"Wikidata: {len(by_imdb)} movies/series with review scores")
+    return by_imdb
+
+
+def set_info(r, key, value):
+    lines = [l for l in (r.get("info") or "").split("\n") if l and not l.startswith(key + "\t")]
+    if value:
+        lines.append(f"{key}\t{value}")
+    r["info"] = "\n".join(lines) or None
+
+
+def apply_film_scores(imdb_rows, by_imdb):
+    n = 0
+    for r in imdb_rows:
+        f = by_imdb.get(r["externalId"])
+        if not f:
+            continue
+        mc = f["scores"].get("Metacritic")
+        if isinstance(mc, int):
+            r["metascore"] = mc
+        if f["scores"].get("Rotten Tomatoes"):
+            set_info(r, "Rotten Tomatoes", f["scores"]["Rotten Tomatoes"])
+        if f.get("mcid"):
+            set_info(r, "_metacritic", f"https://www.metacritic.com/{f['mcid'].strip('/')}/")
+        n += 1
+    log(f"Wikidata: scores added to {n} movies/series")
+    return n
+
+
+def apply_game_scores(game_rows, wd_games):
+    """Adds Wikidata scores/platforms to matching games; returns rows for games we did not have."""
+    by_name = {}
+    for k, g in wd_games.items():
+        by_name.setdefault(norm(g["label"]), []).append((k, g))
+    used, matched = set(), 0
+    for r in game_rows:
+        cands = by_name.get(norm(r["title"]))
+        if not cands:
+            continue
+        # Same-named games (remakes) are told apart by year; without a year only a unique name matches.
+        if r.get("year"):
+            pick = [c for c in cands if c[1].get("year") and abs(c[1]["year"] - r["year"]) <= 1]
+        else:
+            pick = cands if len(cands) == 1 else []
+        if not pick:
+            continue
+        k, g = pick[0]
+        used.add(k)
+        matched += 1
+        apply_game(r, g)
+    out = []
+    for k, g in wd_games.items():
+        if k in used:
+            continue
+        r = row(id=f"wd:{k}", type="GAME", source="WIKIDATA", externalId=k, title=g["label"],
+                year=g.get("year"), url=f"https://www.wikidata.org/wiki/{k}")
+        apply_game(r, g)
+        out.append(r)
+    log(f"Wikidata: {matched} games matched, {len(out)} added")
+    return out
+
+
+def apply_game(r, g):
+    mc, oc = g["scores"].get("Metacritic"), g["scores"].get("OpenCritic")
+    if isinstance(mc, int):
+        r["metascore"] = mc
+        set_info(r, "_critic", None)
+    elif r.get("metascore") is None and isinstance(oc, int):
+        r["metascore"] = oc
+        set_info(r, "_critic", "OpenCritic")
+    if isinstance(oc, int):
+        set_info(r, "OpenCritic", f"{oc}/100")
+    if g.get("platforms"):
+        r["platforms"] = pipes(split_pipes(r["platforms"]) + sorted(g["platforms"]))
+    if not r.get("year") and g.get("year"):
+        r["year"] = g["year"]
+    if g.get("mcid"):
+        set_info(r, "_metacritic", f"https://www.metacritic.com/{g['mcid'].strip('/')}/")
+
+
 # ---------------------------------------------------------------- OMDb
+
+def merge_omdb(r, poster, plot, info, metascore):
+    """Adds OMDb fields without overwriting scores and info that came from Wikidata."""
+    r["imageUrl"] = poster or r.get("imageUrl")
+    r["plot"] = plot or r.get("plot")
+    if r.get("metascore") is None:
+        r["metascore"] = metascore
+    for line in (info or "").split("\n"):
+        key, _, value = line.partition("\t")
+        if value and f"\n{key}\t" not in "\n" + (r.get("info") or ""):
+            set_info(r, key, value)
+
 
 def enrich_omdb(rows, limit):
     todo = sorted((r for r in rows if r["source"] == "IMDB" and not r["enrichedAt"]),
@@ -305,11 +541,9 @@ def enrich_omdb(rows, limit):
         rt = next((x.get("Value") for x in d.get("Ratings") or [] if x.get("Source") == "Rotten Tomatoes"), None)
         if rt:
             info.append(("Rotten Tomatoes", rt))
-        r["info"] = "\n".join(f"{a}\t{b}" for a, b in info if b) or None
-        r["plot"] = v("Plot")
-        r["imageUrl"] = v("Poster")
         ms = v("Metascore")
-        r["metascore"] = int(ms) if ms and ms.isdigit() else None
+        merge_omdb(r, v("Poster"), v("Plot"), "\n".join(f"{a}\t{b}" for a, b in info if b),
+                   int(ms) if ms and ms.isdigit() else None)
         done += 1
     log(f"OMDb: enriched {done} titles")
     return done
@@ -355,8 +589,7 @@ def main():
     imdb = run("IMDb", lambda: fetch_imdb(CONFIG["imdb_min_votes"]), lambda: previous("IMDB"))
     steam = run("Steam", lambda: fetch_steam(CONFIG["steam_min_reviews"]), lambda: None)
     if RAWG_KEY:
-        rawg_games = run("RAWG", lambda: fetch_rawg(CONFIG["rawg_popular_pages"], CONFIG["rawg_top_pages"],
-                                                 CONFIG.get("rawg_platform_pages")),
+        rawg_games = run("RAWG", lambda: fetch_rawg(CONFIG),
                          lambda: None)
     else:
         rawg_games = None
@@ -371,13 +604,24 @@ def main():
         steam_prev = previous("STEAM")
         games = steam_prev + (merge_rawg(rawg_games, steam_prev) if rawg_games is not None else previous("RAWG"))
 
+    if CONFIG.get("wikidata", True):
+        wd_games = run("Wikidata games", fetch_wikidata_games, lambda: None)
+        if wd_games is not None:
+            games = [r for r in games if r["source"] != "WIKIDATA"]
+            games += apply_game_scores(games, wd_games)
+        elif not any(r["source"] == "WIKIDATA" for r in games):
+            games += previous("WIKIDATA")
+        films = run("Wikidata movies", fetch_wikidata_films, lambda: None)
+        if films is not None:
+            apply_film_scores(imdb, films)
+
     # Keep OMDb enrichment from earlier runs so posters accumulate day by day.
     enriched = {r["id"]: r for r in prev if r["source"] == "IMDB" and r.get("enrichedAt")}
     for r in imdb:
         p = enriched.get(r["id"])
         if p and not r.get("enrichedAt"):
-            for k in ("imageUrl", "plot", "info", "metascore", "enrichedAt"):
-                r[k] = p[k]
+            merge_omdb(r, p.get("imageUrl"), p.get("plot"), p.get("info"), p.get("metascore"))
+            r["enrichedAt"] = p["enrichedAt"]
     if OMDB_KEY:
         n = enrich_omdb(imdb, CONFIG["omdb_per_run"])
         status["OMDb"] = {"ok": True, "message": f"{n} titles enriched today, "

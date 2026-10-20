@@ -86,16 +86,23 @@ fun FilterSheet(
 
             if (platforms.isNotEmpty()) {
                 Section("Platforms" + if (filters.platforms.isNotEmpty()) " (any of ${filters.platforms.size})" else "")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    platforms.forEach { p ->
-                        val on = p.name in filters.platforms
-                        FilterChip(
-                            selected = on,
-                            onClick = {
-                                onChange(filters.copy(platforms = if (on) filters.platforms - p.name else filters.platforms + p.name))
-                            },
-                            label = { Text("${p.name}  ${compact(p.count)}") },
-                        )
+                groupPlatforms(platforms).forEach { (group, items) ->
+                    Text(
+                        group,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items.forEach { p ->
+                            val on = p.name in filters.platforms
+                            FilterChip(
+                                selected = on,
+                                onClick = {
+                                    onChange(filters.copy(platforms = if (on) filters.platforms - p.name else filters.platforms + p.name))
+                                },
+                                label = { Text("${p.name}  ${compact(p.count)}") },
+                            )
+                        }
                     }
                 }
             }

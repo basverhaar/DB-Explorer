@@ -91,7 +91,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Database", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "The database is built once a day on GitHub from IMDb, Steam and RAWG. " +
+                        "The database is built once a day on GitHub from IMDb, Steam, RAWG and Wikidata. " +
                             "This phone only downloads the finished file when there is a new one.",
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -173,8 +173,8 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
 
             Text(
-                "Data: IMDb non-commercial datasets (personal use), Steam & SteamSpy, RAWG. " +
-                    "Metascores © Metacritic, provided through RAWG.",
+                "Data: IMDb non-commercial datasets (personal use), Steam & SteamSpy, RAWG, Wikidata. " +
+                    "Review scores © Metacritic / OpenCritic / Rotten Tomatoes, via Wikidata and RAWG.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
